@@ -1,0 +1,4 @@
+_site/
+coverage/
+node_modules/
+.DS_Store

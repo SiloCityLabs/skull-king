@@ -1,0 +1,6 @@
+{
+  "name": "skull-king",
+  "private": true,
+  "type": "module",
+  "description": "Skull King Scorekeeper PWA — static site; no bundler."
+}

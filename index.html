@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a1410" id="themeColor" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="Skull King scorecard keeper — turn-based bids, tricks, bonuses, and running totals." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Skull King" />
+  <title>Skull King Scorekeeper</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=__BUILD_HASH__" />
+</head>
+<body>
+  <div id="app" class="app" data-view="home">
+    <!-- HOME -->
+    <section class="view view-home" id="viewHome" data-view-panel="home">
+      <header class="brand-hero">
+        <img class="brand-mark" src="icons/icon-192.png" width="96" height="96" alt="" />
+        <h1 class="brand-title">Skull King</h1>
+        <p class="brand-tag">Scorecard · turn by turn</p>
+      </header>
+
+      <div class="home-actions">
+        <button type="button" class="btn btn-primary btn-block" id="newGameBtn">New voyage</button>
+      </div>
+
+      <div class="game-list-wrap">
+        <h2 class="section-label">Saved games</h2>
+        <div class="home-empty" id="homeEmpty">
+          <p>No games yet. Deal the first round.</p>
+        </div>
+        <div class="game-list" id="gameList" role="list"></div>
+      </div>
+
+      <footer class="home-foot">
+        <button type="button" class="linkish" id="rulesBtn">Scoring reference</button>
+        <span class="build-hash" title="Build">__BUILD_HASH__</span>
+      </footer>
+    </section>
+
+    <!-- SETUP -->
+    <section class="view view-setup" id="viewSetup" data-view-panel="setup" hidden>
+      <header class="bar">
+        <button type="button" class="icon-btn" id="setupBackBtn" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <h2 class="bar-title">Crew &amp; rules</h2>
+        <span class="bar-spacer"></span>
+      </header>
+
+      <div class="setup-body">
+        <label class="field">
+          <span>Scoring</span>
+          <select id="scoringModeSelect">
+            <option value="classic">Classic</option>
+            <option value="rascal">Rascal’s (Cannonball / Grapeshot)</option>
+          </select>
+        </label>
+
+        <div class="players-setup" id="playersSetup"></div>
+        <button type="button" class="btn btn-secondary btn-block" id="addPlayerBtn">Add pirate</button>
+        <button type="button" class="btn btn-primary btn-block" id="startGameBtn">Set sail</button>
+      </div>
+    </section>
+
+    <!-- PLAY -->
+    <section class="view view-play" id="viewPlay" data-view-panel="play" hidden>
+      <header class="bar">
+        <button type="button" class="icon-btn" id="playHomeBtn" aria-label="Home">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        </button>
+        <div class="bar-center">
+          <div class="bar-title" id="playTitle">Round 1</div>
+          <div class="bar-sub" id="playPhase">Bidding</div>
+        </div>
+        <button type="button" class="icon-btn" id="scorepadToggleBtn" aria-label="Scorepad" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h5v5H7zm7-3h3v2h-3zm0 4h3v2h-3zm0 4h3v2h-3z"/></svg>
+        </button>
+      </header>
+
+      <div class="play-progress" id="playProgress" aria-hidden="true"></div>
+
+      <div class="play-body" id="playBody"></div>
+
+      <nav class="play-tabs" id="playTabs" aria-label="Views">
+        <button type="button" class="tab active" data-tab="turn">Turn</button>
+        <button type="button" class="tab" data-tab="pad">Scorepad</button>
+        <button type="button" class="tab" data-tab="standings">Standings</button>
+      </nav>
+    </section>
+
+    <!-- RULES SHEET -->
+    <div class="sheet" id="rulesSheet" hidden>
+      <div class="sheet-backdrop" data-close-sheet></div>
+      <div class="sheet-panel" role="dialog" aria-labelledby="rulesTitle">
+        <header class="sheet-head">
+          <h2 id="rulesTitle">Scoring</h2>
+          <button type="button" class="icon-btn" data-close-sheet aria-label="Close">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </header>
+        <div class="sheet-body prose">
+          <h3>Classic</h3>
+          <ul>
+            <li>Exact non-zero bid: <strong>+20</strong> per trick won</li>
+            <li>Exact zero bid: <strong>+10</strong> × cards dealt</li>
+            <li>Missed bid: <strong>−10</strong> × |bid − won|</li>
+            <li>Bonuses count only when the bid is exact</li>
+          </ul>
+          <h3>Bonuses (enter raw totals)</h3>
+          <ul>
+            <li>Color 14s: +10 each · Black 14: +20</li>
+            <li>Pirate captures Mermaid: +20</li>
+            <li>Skull King captures Pirate: +30 each</li>
+            <li>Mermaid captures Skull King: +40</li>
+            <li>Loot alliance (both bids exact): +20 each</li>
+          </ul>
+          <h3>Rascal’s scoring</h3>
+          <ul>
+            <li><strong>Grapeshot:</strong> 10 × cards if exact; half if off by 1; else 0 (bonuses scale the same)</li>
+            <li><strong>Cannonball:</strong> 15 × cards if exact; else 0 (including bonuses)</li>
+          </ul>
+          <p class="muted">Reference art in-app mirrors Grandpa Beck’s scorepad fields: bid/result, bid points, bonus, round points, running total.</p>
+          <img class="ref-img" src="images/Image3_480x480.webp" alt="Skull King scorepad layout" />
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden role="status"></div>
+  </div>
+
+  <script type="module" src="app.js?v=__BUILD_HASH__"></script>
+</body>
+</html>

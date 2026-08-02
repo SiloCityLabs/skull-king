@@ -1,0 +1,9 @@
+# Cloudflare Pages headers (copied into _site by make build).
+# Service worker scripts must revalidate so each deploy can activate and
+# drop obsolete recorder-<hash> Cache Storage entries on the client.
+
+/sw.js
+  Cache-Control: no-cache
+
+/sw-rules.js
+  Cache-Control: no-cache
