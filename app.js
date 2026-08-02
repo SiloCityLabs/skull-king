@@ -13,12 +13,42 @@ import {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+const SETTINGS_KEY = "skull-king.settings.v1";
+const BUILD_HASH = "__BUILD_HASH__";
+
+const DEFAULT_SETTINGS = {
+  defaultScoring: "classic",
+  warnTrickMismatch: true,
+  wakeLock: true,
+};
+
 const state = {
   view: "home",
   game: null,
   playTab: "turn",
   setupNames: ["", "", ""],
+  settingsReturnView: "home",
+  settings: loadSettings(),
+  wakeLockSentinel: null,
 };
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+}
+
+function scoringLabel(mode) {
+  return mode === "rascal" ? "Rascal’s (Cannonball / Grapeshot)" : "Classic";
+}
 
 function toast(msg, ms = 2200) {
   const el = $("#toast");
@@ -36,6 +66,7 @@ function setView(name) {
   $$("[data-view-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.viewPanel !== name;
   });
+  syncWakeLock();
 }
 
 async function saveGame() {
@@ -164,7 +195,7 @@ function renderSetup() {
 
 function startSetup() {
   state.setupNames = ["", "", ""];
-  $("#scoringModeSelect").value = "classic";
+  $("#scoringModeSelect").value = state.settings.defaultScoring === "rascal" ? "rascal" : "classic";
   setView("setup");
   renderSetup();
 }
@@ -222,6 +253,7 @@ function renderPlay() {
     body.innerHTML = renderTurn(g);
     bindTurnControls(body);
   }
+  syncWakeLock();
 }
 
 function renderStandings(g) {
@@ -558,7 +590,7 @@ async function confirmTurn(value) {
     g.turnIndex += 1;
     if (g.turnIndex >= g.players.length) {
       const claimed = totalTricksWon(g, ri);
-      if (claimed !== cards) {
+      if (claimed !== cards && state.settings.warnTrickMismatch) {
         toast(`Tricks claimed (${claimed}) ≠ ${cards} dealt — adjust if needed`);
       }
       g.phase = "bonuses";
@@ -628,6 +660,52 @@ function closeSheets() {
   });
 }
 
+/* ---------- SETTINGS / WAKE LOCK ---------- */
+
+function openSettings() {
+  state.settingsReturnView = state.view === "settings" ? "home" : state.view;
+  renderSettings();
+  setView("settings");
+}
+
+function renderSettings() {
+  $("#defaultScoringLabel").textContent = scoringLabel(state.settings.defaultScoring);
+  $("#settingWarnTricks").checked = !!state.settings.warnTrickMismatch;
+  $("#settingWakeLock").checked = !!state.settings.wakeLock;
+  const build = `Build ${BUILD_HASH}`;
+  const homeBuild = $("#homeBuildHash");
+  const settingsBuild = $("#settingsBuildLabel");
+  if (homeBuild) homeBuild.textContent = build;
+  if (settingsBuild) settingsBuild.textContent = build;
+}
+
+async function syncWakeLock() {
+  const want = state.settings.wakeLock && state.view === "play" && state.game && state.game.phase !== "finished";
+  if (!want) {
+    await releaseWakeLock();
+    return;
+  }
+  if (!("wakeLock" in navigator)) return;
+  if (state.wakeLockSentinel) return;
+  try {
+    state.wakeLockSentinel = await navigator.wakeLock.request("screen");
+    state.wakeLockSentinel.addEventListener("release", () => {
+      state.wakeLockSentinel = null;
+    });
+  } catch {
+    /* ignored — unsupported / denied */
+  }
+}
+
+async function releaseWakeLock() {
+  try {
+    await state.wakeLockSentinel?.release();
+  } catch {
+    /* ignore */
+  }
+  state.wakeLockSentinel = null;
+}
+
 /* ---------- boot ---------- */
 
 function bindChrome() {
@@ -660,6 +738,33 @@ function bindChrome() {
     renderPlay();
   });
   $("#rulesBtn").addEventListener("click", () => openSheet("#rulesSheet"));
+  $("#settingsRulesBtn").addEventListener("click", () => openSheet("#rulesSheet"));
+  $("#openSettingsBtn").addEventListener("click", openSettings);
+  $("#settingsBackBtn").addEventListener("click", () => {
+    const back = state.settingsReturnView || "home";
+    state.settingsReturnView = "home";
+    setView(back);
+    if (back === "home") renderHome();
+    else if (back === "play") renderPlay();
+  });
+  $("#settingDefaultScoringBtn").addEventListener("click", () => {
+    state.settings.defaultScoring = state.settings.defaultScoring === "rascal" ? "classic" : "rascal";
+    saveSettings();
+    renderSettings();
+    toast(`Default: ${scoringLabel(state.settings.defaultScoring)}`);
+  });
+  $("#settingWarnTricks").addEventListener("change", (e) => {
+    state.settings.warnTrickMismatch = !!e.target.checked;
+    saveSettings();
+  });
+  $("#settingWakeLock").addEventListener("change", (e) => {
+    state.settings.wakeLock = !!e.target.checked;
+    saveSettings();
+    syncWakeLock();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") syncWakeLock();
+  });
   document.addEventListener("click", (e) => {
     if (e.target.closest("[data-close-sheet]")) closeSheets();
   });
@@ -681,6 +786,7 @@ async function registerSW() {
 }
 
 bindChrome();
+renderSettings();
 setView("home");
 renderHome();
 registerSW();

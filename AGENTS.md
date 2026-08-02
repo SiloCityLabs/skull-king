@@ -16,13 +16,17 @@ A **standalone static PWA** for Skull King scorekeeping — no bundler, no frame
 
 | File | Role |
 |---|---|
-| `index.html` | Shell + views |
+| `index.html` | Shell + views (home, setup, play, settings) |
 | `styles.css` | Themes / mobile / tablet |
 | `db.js` | IndexedDB games store |
 | `score.js` | Pure scoring helpers |
-| `app.js` | UI + turn state machine |
+| `app.js` | UI + turn state machine + settings / wake lock |
 | `sw.js` / `sw-rules.js` | Offline shell cache |
 | `scripts/build-site.sh` | Stamps `__BUILD_HASH__` → `_site/` |
+
+## Settings
+
+Persisted in `localStorage` (`skull-king.settings.v1`): default scoring, trick-mismatch toast, screen wake lock. About section links SiloCityLabs + GitHub and shows stamped build hash.
 
 ## Round phases
 

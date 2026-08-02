@@ -31,6 +31,7 @@ fi
 
 sed -i "s/__BUILD_HASH__/${SHORT_SHA}/g" "$OUT/index.html"
 sed -i "s/__BUILD_HASH__/${SHORT_SHA}/g" "$OUT/sw.js"
+sed -i "s/__BUILD_HASH__/${SHORT_SHA}/g" "$OUT/app.js"
 
 mkdir -p "$OUT/icons"
 cp -r icons/. "$OUT/icons/"
