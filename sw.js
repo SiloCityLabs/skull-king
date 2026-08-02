@@ -19,6 +19,7 @@ const ASSETS = [
   "./icons/favicon-16.png",
   "./images/Image2_480x480.jpg",
   "./images/Image3_480x480.webp",
+  "./haptic.mp3",
 ];
 
 async function deleteObsoleteCaches() {

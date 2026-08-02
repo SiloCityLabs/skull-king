@@ -21,6 +21,9 @@ fi
 echo "Build hash: $SHORT_SHA"
 
 cp index.html styles.css db.js score.js app.js sw.js sw-rules.js manifest.webmanifest "$OUT/"
+if [[ -f haptic.mp3 ]]; then
+  cp haptic.mp3 "$OUT/"
+fi
 cp .nojekyll "$OUT/" 2>/dev/null || true
 if [[ -f CNAME ]]; then
   cp CNAME "$OUT/"

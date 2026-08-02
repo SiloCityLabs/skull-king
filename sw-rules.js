@@ -20,6 +20,7 @@ export function isShellRequest(url) {
       path.endsWith(".jpeg") ||
       path.endsWith(".png") ||
       path.endsWith(".webp") ||
+      path.endsWith(".mp3") ||
       /\/icons\//.test(path) ||
       /\/images\//.test(path)
     );

@@ -26,7 +26,9 @@ A **standalone static PWA** for Skull King scorekeeping — no bundler, no frame
 
 ## Settings
 
-Persisted in `localStorage` (`skull-king.settings.v1`): default scoring, trick-mismatch toast, screen wake lock. About section links SiloCityLabs + GitHub and shows stamped build hash.
+Persisted in `localStorage` (`skull-king.settings.v1`): default scoring, trick-mismatch toast, screen wake lock, haptic feedback. About section links SiloCityLabs + GitHub and shows stamped build hash.
+
+Haptics prefer `navigator.vibrate` when the API reports success; otherwise play root `haptic.mp3`.
 
 ## Round phases
 

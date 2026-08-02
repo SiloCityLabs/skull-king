@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   defaultScoring: "classic",
   warnTrickMismatch: true,
   wakeLock: true,
+  haptic: true,
 };
 
 const state = {
@@ -30,6 +31,9 @@ const state = {
   settingsReturnView: "home",
   settings: loadSettings(),
   wakeLockSentinel: null,
+  hapticAudio: null,
+  /** Cached Vibration API usability; null until first probe. */
+  vibrateOk: null,
 };
 
 function loadSettings() {
@@ -48,6 +52,68 @@ function saveSettings() {
 
 function scoringLabel(mode) {
   return mode === "rascal" ? "Rascal’s (Cannonball / Grapeshot)" : "Classic";
+}
+
+/**
+ * Prefer the Vibration API when it is present and reports success.
+ * Only fall back to haptic.mp3 when vibrate is missing or returns false.
+ */
+function isVibrationAvailable() {
+  if (state.vibrateOk != null) return state.vibrateOk;
+  if (typeof navigator.vibrate !== "function") {
+    state.vibrateOk = false;
+    return false;
+  }
+  try {
+    // Cancel any ongoing vibration; false means the API is not usable here.
+    state.vibrateOk = navigator.vibrate(0) === true;
+  } catch {
+    state.vibrateOk = false;
+  }
+  return state.vibrateOk;
+}
+
+function playHapticAudio() {
+  try {
+    if (!state.hapticAudio) {
+      state.hapticAudio = new Audio("./haptic.mp3");
+      state.hapticAudio.preload = "auto";
+    }
+    const a = state.hapticAudio;
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch {
+    /* ignore autoplay / decode errors */
+  }
+}
+
+/** Light tick for steppers / chips. */
+function hapticTick() {
+  if (!state.settings.haptic) return;
+  if (isVibrationAvailable()) {
+    try {
+      if (navigator.vibrate(12)) return;
+      state.vibrateOk = false;
+    } catch {
+      state.vibrateOk = false;
+    }
+  }
+  playHapticAudio();
+}
+
+/** Stronger confirm for lock / advance. */
+function hapticConfirm() {
+  if (!state.settings.haptic) return;
+  if (isVibrationAvailable()) {
+    try {
+      if (navigator.vibrate([16, 40, 16])) return;
+      state.vibrateOk = false;
+    } catch {
+      state.vibrateOk = false;
+    }
+  }
+  playHapticAudio();
 }
 
 function toast(msg, ms = 2200) {
@@ -536,7 +602,9 @@ function bindTurnControls(root) {
 
   const valueEl = $("#stepValue", root);
   const setValue = (n) => {
-    value = Math.min(max, Math.max(min, n));
+    const next = Math.min(max, Math.max(min, n));
+    if (next !== value) hapticTick();
+    value = next;
     if (valueEl) valueEl.textContent = String(value);
   };
 
@@ -549,6 +617,7 @@ function bindTurnControls(root) {
   root.querySelectorAll("[data-bid-type]").forEach((btn) => {
     btn.addEventListener("click", () => {
       round.bidType = btn.dataset.bidType;
+      hapticTick();
       root.querySelectorAll("[data-bid-type]").forEach((b) => {
         b.classList.toggle("active", b.dataset.bidType === round.bidType);
       });
@@ -556,12 +625,15 @@ function bindTurnControls(root) {
   });
 
   $("#confirmTurnBtn", root)?.addEventListener("click", async () => {
+    hapticConfirm();
     await confirmTurn(value);
   });
   $("#advanceRoundBtn", root)?.addEventListener("click", async () => {
+    hapticConfirm();
     await advanceRound();
   });
   $("#editRoundBtn", root)?.addEventListener("click", async () => {
+    hapticTick();
     g.phase = "bidding";
     g.turnIndex = 0;
     // keep existing bids/wons for editing
@@ -672,6 +744,7 @@ function renderSettings() {
   $("#defaultScoringLabel").textContent = scoringLabel(state.settings.defaultScoring);
   $("#settingWarnTricks").checked = !!state.settings.warnTrickMismatch;
   $("#settingWakeLock").checked = !!state.settings.wakeLock;
+  $("#settingHaptic").checked = !!state.settings.haptic;
   const build = `Build ${BUILD_HASH}`;
   const homeBuild = $("#homeBuildHash");
   const settingsBuild = $("#settingsBuildLabel");
@@ -761,6 +834,11 @@ function bindChrome() {
     state.settings.wakeLock = !!e.target.checked;
     saveSettings();
     syncWakeLock();
+  });
+  $("#settingHaptic").addEventListener("change", (e) => {
+    state.settings.haptic = !!e.target.checked;
+    saveSettings();
+    if (state.settings.haptic) hapticTick();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") syncWakeLock();
