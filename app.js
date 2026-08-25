@@ -13,7 +13,6 @@ import {
   lastCompletedRoundIndex,
   completedRoundNumbers,
   isTiedForFirst,
-  effectiveBid,
   formatBidDisplay,
   startingPlayerForRound,
   nextTurnIndex,
@@ -651,8 +650,6 @@ function renderTurn(g) {
   }
 
   if (g.phase === "bidding") {
-    const harryAdj = Number(round.harryAdjust) || 0;
-    const effBid = effectiveBid(round, cards);
     return `
       <div class="turn-card">
         <p class="turn-who"><span class="eyebrow">Bid</span> ${escapeHtml(player.name)}</p>
@@ -661,16 +658,6 @@ function renderTurn(g) {
           <button type="button" class="stepper-btn" data-delta="-1" aria-label="Decrease">−</button>
           <div class="stepper-value" id="stepValue">${round.bid ?? 0}</div>
           <button type="button" class="stepper-btn" data-delta="1" aria-label="Increase">+</button>
-        </div>
-        ${
-          harryAdj !== 0
-            ? `<p class="hint harry-hint">Scoring bid: <strong>${effBid}</strong> (Harry ${harryAdj > 0 ? "+" : ""}${harryAdj})</p>`
-            : ""
-        }
-        <div class="harry-row" role="group" aria-label="Harry the Giant bid adjustment">
-          <button type="button" class="btn btn-secondary harry-btn ${harryAdj === 1 ? "active" : ""}" data-harry="1">Add Harry (+1)</button>
-          <button type="button" class="chip ${harryAdj === -1 ? "active" : ""}" data-harry="-1">−1</button>
-          <button type="button" class="chip ${harryAdj === 0 ? "active" : ""}" data-harry="0">Clear</button>
         </div>
         ${
           g.scoringMode === "rascal"
@@ -691,11 +678,12 @@ function renderTurn(g) {
 
   if (g.phase === "tricks") {
     const wonTotal = totalTricksWon(g, ri);
+    const harryAdj = Number(round.harryAdjust) || 0;
     const bidLabel = formatBidDisplay(round);
     return `
       <div class="turn-card">
         <p class="turn-who"><span class="eyebrow">Tricks won</span> ${escapeHtml(player.name)}</p>
-        <p class="hint">Bid was <strong>${bidLabel}</strong> · ${wonTotal} / ${cards} tricks claimed</p>
+        <p class="hint" id="tricksBidHint">Bid was <strong>${bidLabel}</strong> · ${wonTotal} / ${cards} tricks claimed</p>
         <div class="stepper" data-stepper="won">
           <button type="button" class="stepper-btn" data-delta="-1" aria-label="Decrease">−</button>
           <div class="stepper-value" id="stepValue">${round.won ?? 0}</div>
@@ -705,6 +693,11 @@ function renderTurn(g) {
           ${Array.from({ length: cards + 1 }, (_, n) => n)
             .map((n) => `<button type="button" class="chip quick" data-set="${n}">${n}</button>`)
             .join("")}
+        </div>
+        <div class="harry-row" role="group" aria-label="Harry the Giant bid adjustment">
+          <button type="button" class="btn btn-secondary harry-btn ${harryAdj === 1 ? "active" : ""}" data-harry="1">Add Harry (+1)</button>
+          <button type="button" class="chip ${harryAdj === -1 ? "active" : ""}" data-harry="-1">−1</button>
+          <button type="button" class="chip ${harryAdj === 0 ? "active" : ""}" data-harry="0">Clear</button>
         </div>
         <div class="turn-actions">
           <button type="button" class="btn btn-primary btn-block" id="confirmTurnBtn">Next pirate</button>
@@ -888,21 +881,10 @@ function bindTurnControls(root) {
         b.classList.toggle("active", Number(b.dataset.harry) === next);
       });
       $(".harry-btn", root)?.classList.toggle("active", next === 1);
-      const hint = $(".harry-hint", root);
-      const adj = Number(round.harryAdjust) || 0;
-      const eff = effectiveBid(round, cards);
-      if (adj !== 0) {
-        if (hint) {
-          hint.innerHTML = `Scoring bid: <strong>${eff}</strong> (Harry ${adj > 0 ? "+" : ""}${adj})`;
-        } else {
-          const stepper = $(".stepper", root);
-          const p = document.createElement("p");
-          p.className = "hint harry-hint";
-          p.innerHTML = `Scoring bid: <strong>${eff}</strong> (Harry ${adj > 0 ? "+" : ""}${adj})`;
-          stepper?.insertAdjacentElement("afterend", p);
-        }
-      } else if (hint) {
-        hint.remove();
+      const bidHint = $("#tricksBidHint", root);
+      if (bidHint) {
+        const wonTotal = totalTricksWon(g, ri);
+        bidHint.innerHTML = `Bid was <strong>${formatBidDisplay(round)}</strong> · ${wonTotal} / ${cards} tricks claimed`;
       }
     });
   });
