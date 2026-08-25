@@ -216,4 +216,16 @@ describe("ties and voyage continuation", () => {
     expect(completedRoundNumbers(g)).toEqual([1, 2, 4]);
     expect(lastCompletedRoundIndex(g)).toBe(1);
   });
+
+  it("does not continue after round 10 with a clear winner", () => {
+    const g = createGame({ players: ["A", "B"] });
+    for (let i = 0; i < STANDARD_ROUNDS; i++) {
+      completeRound(g, i, [
+        { bid: 1, won: 1 },
+        { bid: 0, won: 0 },
+      ]);
+    }
+    g.currentRound = STANDARD_ROUNDS;
+    expect(shouldContinueVoyage(g)).toBe(false);
+  });
 });
