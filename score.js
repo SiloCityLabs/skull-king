@@ -228,12 +228,23 @@ export function totalTricksWon(game, roundIndex) {
   }, 0);
 }
 
-/** Highest round index that has been completed (0-based), or -1. */
+/** Highest contiguous completed round index from the start (0-based), or -1. */
 export function lastCompletedRoundIndex(game) {
   let last = -1;
   const len = Math.max(...game.players.map((p) => p.rounds.length), 0);
   for (let i = 0; i < len; i++) {
     if (game.players.every((p) => p.rounds[i]?.completed)) last = i;
+    else break;
   }
   return last;
+}
+
+/** 1-based round numbers that are fully completed (may include gaps while editing). */
+export function completedRoundNumbers(game) {
+  const len = Math.max(...game.players.map((p) => p.rounds.length), 0);
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    if (game.players.every((p) => p.rounds[i]?.completed)) out.push(i + 1);
+  }
+  return out;
 }

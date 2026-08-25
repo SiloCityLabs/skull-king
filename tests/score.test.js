@@ -12,6 +12,8 @@ import {
   leaderboard,
   isTiedForFirst,
   shouldContinueVoyage,
+  lastCompletedRoundIndex,
+  completedRoundNumbers,
   STANDARD_ROUNDS,
   MAX_CARDS,
 } from "../score.js";
@@ -197,15 +199,21 @@ describe("ties and voyage continuation", () => {
     expect(leaderboard(g)[0].total).toBeGreaterThan(leaderboard(g)[1].total);
   });
 
-  it("does not continue after round 10 with a clear winner", () => {
+  it("completedRoundNumbers lists all completed rounds even with gaps", () => {
     const g = createGame({ players: ["A", "B"] });
-    for (let i = 0; i < STANDARD_ROUNDS; i++) {
-      completeRound(g, i, [
-        { bid: 1, won: 1 },
-        { bid: 0, won: 0 },
-      ]);
-    }
-    g.currentRound = STANDARD_ROUNDS;
-    expect(shouldContinueVoyage(g)).toBe(false);
+    completeRound(g, 0, [
+      { bid: 0, won: 0 },
+      { bid: 0, won: 0 },
+    ]);
+    completeRound(g, 1, [
+      { bid: 0, won: 0 },
+      { bid: 0, won: 0 },
+    ]);
+    ensureRoundSlots(g, 4);
+    g.players.forEach((p) => {
+      p.rounds[3] = { bid: 0, won: 0, bonus: 0, bidType: "grapeshot", completed: true };
+    });
+    expect(completedRoundNumbers(g)).toEqual([1, 2, 4]);
+    expect(lastCompletedRoundIndex(g)).toBe(1);
   });
 });

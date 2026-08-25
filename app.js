@@ -11,6 +11,7 @@ import {
   ensureRoundSlots,
   shouldContinueVoyage,
   lastCompletedRoundIndex,
+  completedRoundNumbers,
   isTiedForFirst,
 } from "./score.js";
 
@@ -613,11 +614,19 @@ function renderReview(g, ri, opts = {}) {
     .join("");
 
   const history = !!opts.history;
+  const resume = state.resumeAfterEdit;
+  const returningToFinished = resume?.phase === "finished";
+  const returningToLive = resume && resume.currentRound !== g.currentRound;
   const continueOn = shouldContinueVoyage(g);
   const overtime = g.currentRound >= STANDARD_ROUNDS && continueOn;
+
   let primaryLabel;
   if (history) {
-    primaryLabel = "Back to live";
+    primaryLabel = g.phase === "finished" ? "Back to final" : "Back to live";
+  } else if (returningToFinished) {
+    primaryLabel = "Back to final";
+  } else if (returningToLive) {
+    primaryLabel = `Back to round ${resume.currentRound}`;
   } else if (!continueOn) {
     primaryLabel = "Finish voyage";
   } else if (overtime || g.currentRound >= STANDARD_ROUNDS) {
@@ -727,15 +736,24 @@ function bindTurnControls(root) {
   });
   $("#exitHistoryBtn", root)?.addEventListener("click", () => {
     hapticTick();
-    state.browseRound = null;
-    state.playTab = "turn";
-    renderPlay();
+    exitHistoryBrowse();
   });
   $("#editRoundBtn", root)?.addEventListener("click", async () => {
     hapticTick();
     const n = Number($("#editRoundBtn", root)?.dataset.editRound) || g.currentRound;
     await startEditRound(n);
   });
+}
+
+function exitHistoryBrowse() {
+  state.browseRound = null;
+  const g = state.game;
+  if (g?.phase === "finished") {
+    state.playTab = "standings";
+  } else {
+    state.playTab = "turn";
+  }
+  renderPlay();
 }
 
 async function browseOrEditRound(roundNumber, { edit = false } = {}) {
@@ -751,6 +769,7 @@ async function browseOrEditRound(roundNumber, { edit = false } = {}) {
   }
   if (!completed) {
     state.browseRound = null;
+    if (g.phase === "finished") state.playTab = "standings";
     renderPlay();
     return;
   }
@@ -784,6 +803,55 @@ async function startEditRound(roundNumber) {
   await saveGame();
   renderPlay();
   toast(`Editing round ${roundNumber}`);
+}
+
+/** Restore live/final position after editing a round. */
+async function restoreAfterEdit() {
+  const g = state.game;
+  const resume = state.resumeAfterEdit;
+  if (!g || !resume) return false;
+
+  state.resumeAfterEdit = null;
+  state.browseRound = null;
+  ensureRoundSlots(g, resume.currentRound);
+  g.currentRound = resume.currentRound;
+  g.turnIndex = resume.turnIndex || 0;
+
+  if (resume.phase === "finished") {
+    const lastDone = lastCompletedRoundIndex(g) + 1;
+    if (lastDone >= STANDARD_ROUNDS && isTiedForFirst(g)) {
+      g.currentRound = lastDone + 1;
+      ensureRoundSlots(g, g.currentRound);
+      g.phase = "bidding";
+      g.turnIndex = 0;
+      await saveGame();
+      state.playTab = "turn";
+      renderPlay();
+      toast(`Still tied — overtime round ${g.currentRound}`);
+      return true;
+    }
+    g.phase = "finished";
+    g.currentRound = Math.max(lastDone, STANDARD_ROUNDS, resume.currentRound);
+    await saveGame();
+    state.playTab = "standings";
+    renderPlay();
+    toast("Back to final");
+    return true;
+  }
+
+  g.phase = resume.phase;
+  await saveGame();
+  state.playTab = "turn";
+  renderPlay();
+  toast(`Back to round ${g.currentRound}`);
+  return true;
+}
+
+function shouldReturnAfterEdit() {
+  const resume = state.resumeAfterEdit;
+  if (!resume) return false;
+  if (resume.phase === "finished") return true;
+  return resume.currentRound !== state.game?.currentRound;
 }
 
 async function confirmTurn(value) {
@@ -821,6 +889,12 @@ async function confirmTurn(value) {
       g.players.forEach((p) => {
         p.rounds[ri].completed = true;
       });
+      // Editing a past/final round: jump straight back (no history swipe limbo).
+      if (shouldReturnAfterEdit()) {
+        await saveGame();
+        await restoreAfterEdit();
+        return;
+      }
       g.phase = "review";
       g.turnIndex = 0;
     }
@@ -834,44 +908,14 @@ async function advanceRound() {
   const g = state.game;
   const resume = state.resumeAfterEdit;
 
-  // Finished re-scoring a past round — jump back to the live position.
-  if (resume && resume.currentRound !== g.currentRound) {
-    state.resumeAfterEdit = null;
-    ensureRoundSlots(g, resume.currentRound);
-    g.currentRound = resume.currentRound;
-    g.turnIndex = resume.turnIndex || 0;
-
-    if (resume.phase === "finished") {
-      const lastDone = lastCompletedRoundIndex(g) + 1;
-      if (lastDone >= STANDARD_ROUNDS && isTiedForFirst(g)) {
-        g.currentRound = lastDone + 1;
-        ensureRoundSlots(g, g.currentRound);
-        g.phase = "bidding";
-        g.turnIndex = 0;
-        await saveGame();
-        state.playTab = "turn";
-        renderPlay();
-        toast(`Still tied — overtime round ${g.currentRound}`);
-        return;
-      }
-      g.phase = "finished";
-      g.currentRound = Math.max(lastDone, STANDARD_ROUNDS);
-      await saveGame();
-      state.playTab = "standings";
-      renderPlay();
-      toast("Voyage complete");
-      return;
-    }
-
-    g.phase = resume.phase;
-    await saveGame();
-    state.playTab = "turn";
-    renderPlay();
-    toast(`Back to round ${g.currentRound}`);
+  // Any in-progress edit return (including editing the final round of a finished game).
+  if (resume && (resume.phase === "finished" || resume.currentRound !== g.currentRound)) {
+    await restoreAfterEdit();
     return;
   }
 
   state.resumeAfterEdit = null;
+  state.browseRound = null;
 
   if (!shouldContinueVoyage(g)) {
     g.phase = "finished";
@@ -925,7 +969,6 @@ function bindRoundSwipe(root) {
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
       if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
-      // swipe left → newer / live; swipe right → older history
       if (dx < 0) shiftHistory(1);
       else shiftHistory(-1);
     },
@@ -936,39 +979,44 @@ function bindRoundSwipe(root) {
 function shiftHistory(dir) {
   const g = state.game;
   if (!g || state.playTab !== "turn") return;
-  const lastDone = lastCompletedRoundIndex(g); // 0-based
-  if (lastDone < 0) return;
+  // Don't browse while mid-edit — that caused the 10→3→edited loop.
+  if (state.resumeAfterEdit) return;
 
-  let cur;
-  if (state.browseRound != null) cur = state.browseRound;
-  else if (g.phase === "review" || g.phase === "finished") cur = g.currentRound;
-  else cur = g.currentRound; // live in-progress — first swipe goes to last completed
+  const completed = completedRoundNumbers(g);
+  if (!completed.length) return;
 
-  if (state.browseRound == null && g.phase !== "review" && g.phase !== "finished") {
-    // Enter history at last completed (swipe either way starts browse)
-    state.browseRound = lastDone + 1;
+  let idx;
+  if (state.browseRound != null) {
+    idx = completed.indexOf(state.browseRound);
+    if (idx < 0) idx = completed.length - 1;
+  } else if (g.phase === "finished" || g.phase === "review") {
+    // First swipe from final/review enters the newest completed round
+    if (dir < 0) {
+      state.browseRound = completed[completed.length - 1];
+      hapticTick();
+      renderPlay();
+      return;
+    }
+    // swipe toward "newer" while already at live/final → stay put
+    return;
+  } else {
+    // Live mid-round: first swipe opens last completed
+    state.browseRound = completed[completed.length - 1];
     hapticTick();
     renderPlay();
     return;
   }
 
-  const next = cur + dir;
-  if (next < 1) return;
-  if (next > lastDone + 1) {
-    // past newest completed → live
-    state.browseRound = null;
+  const nextIdx = idx + dir;
+  if (nextIdx < 0) return;
+  if (nextIdx >= completed.length) {
+    // Past newest completed → exit history to live or final standings
+    exitHistoryBrowse();
     hapticTick();
-    renderPlay();
     return;
   }
-  if (next === g.currentRound && (g.phase === "review" || !g.players.every((p) => p.rounds[next - 1]?.completed))) {
-    state.browseRound = null;
-    hapticTick();
-    renderPlay();
-    return;
-  }
-  if (!g.players.every((p) => p.rounds[next - 1]?.completed)) return;
-  state.browseRound = next;
+
+  state.browseRound = completed[nextIdx];
   hapticTick();
   renderPlay();
 }
