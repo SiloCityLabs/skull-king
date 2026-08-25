@@ -13,6 +13,10 @@ import {
   isTiedForFirst,
   shouldContinueVoyage,
   lastCompletedRoundIndex,
+  effectiveBid,
+  formatBidDisplay,
+  startingPlayerIndexForRound,
+  startingPlayerForRound,
   completedRoundNumbers,
   STANDARD_ROUNDS,
   MAX_CARDS,
@@ -227,5 +231,38 @@ describe("ties and voyage continuation", () => {
     }
     g.currentRound = STANDARD_ROUNDS;
     expect(shouldContinueVoyage(g)).toBe(false);
+  });
+});
+
+describe("starting player rotation", () => {
+  it("rotates lead each round", () => {
+    const g = createGame({ players: ["A", "B", "C"], startingPlayerIndex: 1 });
+    expect(startingPlayerIndexForRound(g, 1)).toBe(1);
+    expect(startingPlayerForRound(g, 1).name).toBe("B");
+    expect(startingPlayerIndexForRound(g, 2)).toBe(2);
+    expect(startingPlayerForRound(g, 3).name).toBe("A");
+  });
+});
+
+describe("Harry the Giant bid adjustment", () => {
+  it("scores using bid + harryAdjust", () => {
+    const rounds = Array.from({ length: 4 }, () => ({
+      bid: 0,
+      won: 0,
+      bonus: 0,
+      harryAdjust: 0,
+      completed: true,
+    }));
+    const round = { bid: 4, won: 5, bonus: 0, harryAdjust: 1, completed: true };
+    rounds.push(round);
+    expect(effectiveBid(round, 5)).toBe(5);
+    const scored = recomputePlayerTotals(rounds, "classic");
+    expect(scored[4].bidPoints).toBe(100);
+    expect(formatBidDisplay(round)).toBe("4+1→5");
+  });
+
+  it("clamps harry-adjusted bid to cards dealt", () => {
+    expect(effectiveBid({ bid: 5, harryAdjust: 1 }, 5)).toBe(5);
+    expect(effectiveBid({ bid: 0, harryAdjust: -1 }, 3)).toBe(0);
   });
 });

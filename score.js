@@ -108,8 +108,9 @@ export function recomputePlayerTotals(rounds, scoringMode) {
     let bonusPts = 0;
     let roundPts = 0;
     if (!incomplete) {
-      bidPts = computeBidPoints(bid, won, cardsDealt, scoringMode, r.bidType || "grapeshot");
-      bonusPts = applyBonus(r.bonus || 0, bid, won, scoringMode, r.bidType || "grapeshot");
+      const bidForScore = effectiveBid(r, cardsDealt);
+      bidPts = computeBidPoints(bidForScore, won, cardsDealt, scoringMode, r.bidType || "grapeshot");
+      bonusPts = applyBonus(r.bonus || 0, bidForScore, won, scoringMode, r.bidType || "grapeshot");
       roundPts = roundPoints(bidPts, bonusPts);
       running += roundPts;
     }
@@ -128,10 +129,29 @@ export function emptyRound() {
   return {
     bid: null,
     won: null,
-    bonus: 0,
+    bonus: null,
     bidType: "grapeshot",
+    harryAdjust: 0,
     completed: false,
   };
+}
+
+/** Scoring bid after Harry the Giant’s ±1 (rulebook advanced pirate). */
+export function effectiveBid(round, cardsDealt) {
+  const base = Number(round?.bid) || 0;
+  const adj = Number(round?.harryAdjust) || 0;
+  const cards = Number(cardsDealt) || 1;
+  return Math.min(cards, Math.max(0, base + adj));
+}
+
+export function formatBidDisplay(round) {
+  const base = round?.bid;
+  if (base == null) return "—";
+  const adj = Number(round?.harryAdjust) || 0;
+  const eff = effectiveBid(round, 99);
+  if (adj === 0) return String(base);
+  const sign = adj > 0 ? "+" : "";
+  return `${base}${sign}${adj}→${eff}`;
 }
 
 function newId() {
@@ -145,10 +165,11 @@ function newId() {
   return `sk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function createPlayer(name, id) {
+export function createPlayer(name, id, { ghost = false } = {}) {
   return {
     id: id || newId(),
-    name: String(name || "").trim() || "Pirate",
+    name: String(name || "").trim() || (ghost ? "Greybeard's Ghost" : "Pirate"),
+    ghost: !!ghost,
     rounds: Array.from({ length: STANDARD_ROUNDS }, () => emptyRound()),
   };
 }
@@ -164,8 +185,10 @@ export function ensureRoundSlots(game, throughRound) {
   return game;
 }
 
-export function createGame({ players, scoringMode = "classic", title } = {}) {
-  const names = (players || []).map((p) => (typeof p === "string" ? p : p.name));
+export function createGame({ players, scoringMode = "classic", title, startingPlayerIndex = 0 } = {}) {
+  const list = (players || []).map((p) =>
+    typeof p === "string" ? { name: p } : { ...p }
+  );
   return {
     id: newId(),
     title: title || defaultGameTitle(),
@@ -176,8 +199,95 @@ export function createGame({ players, scoringMode = "classic", title } = {}) {
     /** @type {"bidding"|"tricks"|"bonuses"|"review"|"finished"} */
     phase: "bidding",
     turnIndex: 0,
-    players: names.map((n) => createPlayer(n)),
+    /** Index into players[] who leads round 1; rotates each round. */
+    startingPlayerIndex: Math.max(0, Number(startingPlayerIndex) || 0),
+    players: list.map((p) => createPlayer(p.name, p.id, { ghost: p.ghost })),
   };
+}
+
+/** Player index (0-based) who leads the given round (1-based round number). */
+export function startingPlayerIndexForRound(game, roundNumber) {
+  const n = game.players.length;
+  if (!n) return 0;
+  const base = Number(game.startingPlayerIndex) || 0;
+  const round = Math.max(1, Number(roundNumber) || 1);
+  return (base + round - 1) % n;
+}
+
+export function startingPlayerForRound(game, roundNumber) {
+  const idx = startingPlayerIndexForRound(game, roundNumber);
+  return game.players[idx] || game.players[0];
+}
+
+/** Next human turn index, skipping ghosts in bidding/bonus phases. */
+export function nextTurnIndex(game, fromIndex, phase) {
+  const n = game.players.length;
+  if (!n) return 0;
+  let i = (fromIndex + 1) % n;
+  let guard = 0;
+  while (guard < n) {
+    const p = game.players[i];
+    if (phase === "tricks" || !p?.ghost) return i;
+    i = (i + 1) % n;
+    guard += 1;
+  }
+  return i;
+}
+
+/** First turn index for a phase at round start. */
+export function firstTurnIndexForPhase(game, roundNumber, phase) {
+  if (phase === "bidding") {
+    let i = startingPlayerIndexForRound(game, roundNumber);
+    const n = game.players.length;
+    for (let guard = 0; guard < n; guard++) {
+      if (!game.players[i]?.ghost) return i;
+      i = (i + 1) % n;
+    }
+  }
+  if (phase === "tricks") {
+    return startingPlayerIndexForRound(game, roundNumber);
+  }
+  // bonuses: same order as bidding (first non-ghost after leader)
+  let i = startingPlayerIndexForRound(game, roundNumber);
+  const n = game.players.length;
+  for (let guard = 0; guard < n; guard++) {
+    if (!game.players[i]?.ghost) return i;
+    i = (i + 1) % n;
+  }
+  return 0;
+}
+
+export function allBidsLocked(game, roundIndex) {
+  return game.players.every((p) => p.ghost || p.rounds[roundIndex]?.bid != null);
+}
+
+export function allTricksEntered(game, roundIndex) {
+  return game.players.every((p) => p.rounds[roundIndex]?.won != null);
+}
+
+export function allBonusesEntered(game, roundIndex) {
+  return game.players.every((p) => p.ghost || p.rounds[roundIndex]?.bonus != null);
+}
+
+/** Patch older saved games with new fields. */
+export function normalizeGame(game) {
+  if (!game) return game;
+  if (game.startingPlayerIndex == null) game.startingPlayerIndex = 0;
+  for (const p of game.players || []) {
+    if (p.ghost == null) p.ghost = false;
+    for (const r of p.rounds || []) {
+      if (r && r.harryAdjust == null) r.harryAdjust = 0;
+    }
+  }
+  if (game.phase === "bidding" || game.phase === "bonuses") {
+    const p = game.players[game.turnIndex];
+    if (p?.ghost) {
+      game.turnIndex = firstTurnIndexForPhase(game, game.currentRound, game.phase);
+    }
+  } else if (game.phase === "bidding" && game.turnIndex === 0 && game.currentRound === 1) {
+    game.turnIndex = firstTurnIndexForPhase(game, 1, "bidding");
+  }
+  return game;
 }
 
 export function defaultGameTitle(date = new Date()) {
@@ -192,6 +302,7 @@ export function defaultGameTitle(date = new Date()) {
 export function leaderboard(game) {
   const mode = game.scoringMode;
   return game.players
+    .filter((p) => !p.ghost)
     .map((p) => {
       const scored = recomputePlayerTotals(p.rounds, mode);
       const last = [...scored].reverse().find((r) => r.runningTotal != null);

@@ -13,6 +13,15 @@ import {
   lastCompletedRoundIndex,
   completedRoundNumbers,
   isTiedForFirst,
+  effectiveBid,
+  formatBidDisplay,
+  startingPlayerForRound,
+  nextTurnIndex,
+  firstTurnIndexForPhase,
+  allBidsLocked,
+  allTricksEntered,
+  allBonusesEntered,
+  normalizeGame,
 } from "./score.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -33,6 +42,9 @@ const state = {
   game: null,
   playTab: "turn",
   setupNames: ["", "", ""],
+  setupStartingPlayer: 0,
+  /** Pending crew when 2-player ghost prompt is shown */
+  pendingStart: null,
   settingsReturnView: "home",
   settings: loadSettings(),
   wakeLockSentinel: null,
@@ -234,6 +246,7 @@ async function openGame(id) {
     toast("Game not found");
     return;
   }
+  normalizeGame(g);
   state.game = g;
   state.playTab = "turn";
   state.browseRound = null;
@@ -264,9 +277,22 @@ function renderSetup() {
     wrap.appendChild(row);
   });
 
+  const filled = state.setupNames.map((n) => n.trim()).filter(Boolean);
+  let leadField = $("#startingPlayerField");
+  if (!leadField) {
+    const setupBody = $(".setup-body");
+    const addBtn = $("#addPlayerBtn");
+    leadField = document.createElement("label");
+    leadField.className = "field";
+    leadField.id = "startingPlayerField";
+    setupBody.insertBefore(leadField, addBtn);
+  }
+  updateStartingPlayerSelect();
+
   wrap.querySelectorAll("input[data-player-i]").forEach((input) => {
     input.addEventListener("input", () => {
       state.setupNames[+input.dataset.playerI] = input.value;
+      updateStartingPlayerSelect();
     });
   });
   wrap.querySelectorAll("[data-remove-i]").forEach((btn) => {
@@ -274,22 +300,85 @@ function renderSetup() {
       const i = +btn.dataset.removeI;
       if (state.setupNames.length <= 2) return;
       state.setupNames.splice(i, 1);
+      if (state.setupStartingPlayer >= state.setupNames.length) {
+        state.setupStartingPlayer = 0;
+      }
       renderSetup();
     });
   });
 }
 
+function updateStartingPlayerSelect() {
+  const leadField = $("#startingPlayerField");
+  if (!leadField) return;
+  const filled = state.setupNames.map((n) => n.trim()).filter(Boolean);
+  if (filled.length < 2) {
+    leadField.hidden = true;
+    return;
+  }
+  if (state.setupStartingPlayer >= filled.length) state.setupStartingPlayer = 0;
+  leadField.hidden = false;
+  leadField.innerHTML = `
+    <span>First to lead (round 1)</span>
+    <select id="startingPlayerSelect">
+      ${filled
+        .map(
+          (n, i) =>
+            `<option value="${i}" ${i === state.setupStartingPlayer ? "selected" : ""}>${escapeHtml(n)}</option>`
+        )
+        .join("")}
+    </select>
+  `;
+  $("#startingPlayerSelect")?.addEventListener("change", (e) => {
+    state.setupStartingPlayer = Number(e.target.value) || 0;
+  });
+}
+
 function startSetup() {
   state.setupNames = ["", "", ""];
+  state.setupStartingPlayer = 0;
+  state.pendingStart = null;
   $("#scoringModeSelect").value = state.settings.defaultScoring === "rascal" ? "rascal" : "classic";
   setView("setup");
   renderSetup();
 }
 
-async function startGame() {
-  // Prefer live input values (handles programmatic fills / IME).
+function collectSetupNames() {
   const fromDom = $$("#playersSetup input[data-player-i]").map((el) => el.value.trim());
-  const names = (fromDom.length ? fromDom : state.setupNames).map((n) => n.trim()).filter(Boolean);
+  return (fromDom.length ? fromDom : state.setupNames).map((n) => n.trim()).filter(Boolean);
+}
+
+async function launchGame({ names, scoringMode, withGhost = false, startingPlayerIndex = 0 }) {
+  const players = withGhost
+    ? [{ name: names[0] }, { name: "Greybeard's Ghost", ghost: true }, { name: names[1] }]
+    : names.map((name) => ({ name }));
+  const startIdx = withGhost ? (startingPlayerIndex === 0 ? 0 : 2) : startingPlayerIndex;
+  state.game = createGame({ players, scoringMode, startingPlayerIndex: startIdx });
+  state.game.turnIndex = firstTurnIndexForPhase(state.game, 1, "bidding");
+  await saveGame();
+  state.playTab = "turn";
+  state.browseRound = null;
+  state.resumeAfterEdit = null;
+  state.pendingStart = null;
+  setView("play");
+  renderPlay();
+  toast("Round 1 — place your bids");
+}
+
+function openGhostSheet(names, scoringMode, startingPlayerIndex) {
+  state.pendingStart = { names, scoringMode, startingPlayerIndex };
+  const sheet = $("#ghostSheet");
+  if (sheet) sheet.hidden = false;
+}
+
+function closeGhostSheet() {
+  const sheet = $("#ghostSheet");
+  if (sheet) sheet.hidden = true;
+  state.pendingStart = null;
+}
+
+async function startGame() {
+  const names = collectSetupNames();
   if (names.length < 2) {
     toast("Need at least 2 pirates");
     return;
@@ -299,14 +388,19 @@ async function startGame() {
     return;
   }
   const scoringMode = $("#scoringModeSelect").value;
-  state.game = createGame({ players: names, scoringMode });
-  await saveGame();
-  state.playTab = "turn";
-  state.browseRound = null;
-  state.resumeAfterEdit = null;
-  setView("play");
-  renderPlay();
-  toast("Round 1 — place your bids");
+  const filled = names;
+  let startingPlayerIndex = 0;
+  const leadSel = $("#startingPlayerSelect");
+  if (leadSel) {
+    startingPlayerIndex = Math.min(Number(leadSel.value) || 0, filled.length - 1);
+  }
+
+  if (names.length === 2) {
+    openGhostSheet(names, scoringMode, startingPlayerIndex);
+    return;
+  }
+
+  await launchGame({ names, scoringMode, startingPlayerIndex });
 }
 
 /* ---------- PLAY ---------- */
@@ -327,8 +421,10 @@ function renderPlay() {
     $("#playPhase").textContent = "History — swipe to browse";
   } else {
     $("#playTitle").textContent = `Round ${g.currentRound} · ${cardsInRound(g.currentRound)} cards`;
-    $("#playPhase").textContent =
+    const leader = startingPlayerForRound(g, g.currentRound);
+    const phaseText =
       g.currentRound > STANDARD_ROUNDS ? `Overtime · ${phaseLabel(g.phase)}` : phaseLabel(g.phase);
+    $("#playPhase").textContent = leader ? `${phaseText} · Leads: ${leader.name}` : phaseText;
   }
 
   const prog = $("#playProgress");
@@ -407,11 +503,31 @@ function bindStandingsControls() {
   /* no-op reserved */
 }
 
+function playerScored(player, mode) {
+  if (player.ghost) {
+    let run = 0;
+    return player.rounds.map((r) => {
+      const row = {
+        bid: r?.bid ?? null,
+        won: r?.won ?? null,
+        bidPoints: 0,
+        bonusPoints: 0,
+        roundPoints: 0,
+        runningTotal: run,
+        completed: !!r?.completed,
+        bidType: r?.bidType,
+      };
+      return row;
+    });
+  }
+  return recomputePlayerTotals(player.rounds, mode);
+}
+
 function renderScorepad(g) {
   const mode = g.scoringMode;
   const players = g.players.map((p) => ({
     ...p,
-    scored: recomputePlayerTotals(p.rounds, mode),
+    scored: playerScored(p, mode),
   }));
   const rowsN = Math.max(...players.map((p) => p.scored.length), STANDARD_ROUNDS);
 
@@ -420,10 +536,12 @@ function renderScorepad(g) {
     .join("");
 
   const rows = Array.from({ length: rowsN }, (_, ri) => {
+    const lead = startingPlayerForRound(g, ri + 1);
     const cells = players
       .map((p) => {
         const r = p.scored[ri] || { bid: null, won: null, completed: false };
-        const bid = r.bid == null ? "—" : r.bid;
+        const raw = p.rounds[ri];
+        const bid = p.ghost || raw?.bid == null ? "—" : formatBidDisplay(raw);
         const won = r.won == null ? "—" : r.won;
         const bidPts = r.bidPoints == null ? "" : formatPts(r.bidPoints);
         const bonus = r.completed ? String(r.bonusPoints ?? 0) : "";
@@ -454,6 +572,7 @@ function renderScorepad(g) {
         <th scope="row" class="round-label" data-edit-round="${ri + 1}">
           <span class="rn">${ri + 1}</span>
           <span class="cards">${cardsInRound(ri + 1)}</span>
+          <span class="lead-tag" title="Leads: ${escapeAttr(lead.name)}">⚓ ${escapeHtml(lead.name.split(/\s+/)[0])}</span>
         </th>
         ${cells}
       </tr>`;
@@ -514,6 +633,8 @@ function renderTurn(g) {
   }
 
   if (g.phase === "bidding") {
+    const harryAdj = Number(round.harryAdjust) || 0;
+    const effBid = effectiveBid(round, cards);
     return `
       <div class="turn-card">
         <p class="turn-who"><span class="eyebrow">Bid</span> ${escapeHtml(player.name)}</p>
@@ -522,6 +643,16 @@ function renderTurn(g) {
           <button type="button" class="stepper-btn" data-delta="-1" aria-label="Decrease">−</button>
           <div class="stepper-value" id="stepValue">${round.bid ?? 0}</div>
           <button type="button" class="stepper-btn" data-delta="1" aria-label="Increase">+</button>
+        </div>
+        ${
+          harryAdj !== 0
+            ? `<p class="hint harry-hint">Scoring bid: <strong>${effBid}</strong> (Harry ${harryAdj > 0 ? "+" : ""}${harryAdj})</p>`
+            : ""
+        }
+        <div class="harry-row" role="group" aria-label="Harry the Giant bid adjustment">
+          <button type="button" class="btn btn-secondary harry-btn ${harryAdj === 1 ? "active" : ""}" data-harry="1">Add Harry (+1)</button>
+          <button type="button" class="chip ${harryAdj === -1 ? "active" : ""}" data-harry="-1">−1</button>
+          <button type="button" class="chip ${harryAdj === 0 ? "active" : ""}" data-harry="0">Clear</button>
         </div>
         ${
           g.scoringMode === "rascal"
@@ -542,10 +673,11 @@ function renderTurn(g) {
 
   if (g.phase === "tricks") {
     const wonTotal = totalTricksWon(g, ri);
+    const bidLabel = formatBidDisplay(round);
     return `
       <div class="turn-card">
         <p class="turn-who"><span class="eyebrow">Tricks won</span> ${escapeHtml(player.name)}</p>
-        <p class="hint">Bid was <strong>${round.bid ?? "—"}</strong> · ${wonTotal} / ${cards} tricks claimed</p>
+        <p class="hint">Bid was <strong>${bidLabel}</strong> · ${wonTotal} / ${cards} tricks claimed</p>
         <div class="stepper" data-stepper="won">
           <button type="button" class="stepper-btn" data-delta="-1" aria-label="Decrease">−</button>
           <div class="stepper-value" id="stepValue">${round.won ?? 0}</div>
@@ -568,7 +700,7 @@ function renderTurn(g) {
   return `
     <div class="turn-card">
       <p class="turn-who"><span class="eyebrow">Bonus</span> ${escapeHtml(player.name)}</p>
-      <p class="hint">Bid ${round.bid}/${round.won} · enter raw bonus (only counts if bid is exact)</p>
+      <p class="hint">Bid ${formatBidDisplay(round)}/${round.won} · enter raw bonus (only counts if bid is exact)</p>
       <div class="stepper" data-stepper="bonus">
         <button type="button" class="stepper-btn" data-delta="-10" aria-label="Decrease">−10</button>
         <div class="stepper-value" id="stepValue">${round.bonus ?? 0}</div>
@@ -599,16 +731,16 @@ function renderReview(g, ri, opts = {}) {
   const roundNum = ri + 1;
   const rows = g.players
     .map((p) => {
-      const scored = recomputePlayerTotals(
-        p.rounds.map((r, i) => (i === ri ? { ...r, completed: true } : r)),
+      const scored = playerScored(
+        { ...p, rounds: p.rounds.map((r, i) => (i === ri ? { ...r, completed: true } : r)) },
         mode
       )[ri];
       return `
         <li class="review-row">
           <span class="name">${escapeHtml(p.name)}</span>
-          <span class="bid-result">${scored.bid}/${scored.won}</span>
-          <span class="pts">${formatPts(scored.roundPoints)}</span>
-          <span class="run">${formatPts(scored.runningTotal)}</span>
+          <span class="bid-result">${p.ghost ? `${scored.won ?? "—"}` : `${formatBidDisplay(p.rounds[ri])}/${scored.won}`}</span>
+          <span class="pts">${p.ghost ? "—" : formatPts(scored.roundPoints)}</span>
+          <span class="run">${p.ghost ? "—" : formatPts(scored.runningTotal)}</span>
         </li>`;
     })
     .join("");
@@ -656,8 +788,10 @@ function renderRosterBids(g, ri) {
     .map((p, i) => {
       const r = p.rounds[ri];
       const active = g.phase === "bidding" && i === g.turnIndex;
-      const val = r.bid == null ? "…" : String(r.bid);
-      return `<span class="roster-chip ${active ? "active" : ""} ${r.bid != null ? "set" : ""}">${escapeHtml(p.name)} <em>${val}</em></span>`;
+      let val = "…";
+      if (p.ghost) val = "—";
+      else if (r.bid != null) val = formatBidDisplay(r);
+      return `<span class="roster-chip ${active ? "active" : ""} ${r.bid != null || p.ghost ? "set" : ""}">${escapeHtml(p.name)} <em>${val}</em></span>`;
     })
     .join("");
 }
@@ -667,7 +801,8 @@ function renderRosterTricks(g, ri) {
     .map((p, i) => {
       const r = p.rounds[ri];
       const active = i === g.turnIndex;
-      const val = r.won == null ? `bid ${r.bid}` : `${r.won}/${r.bid}`;
+      const bidPart = p.ghost ? "" : `bid ${formatBidDisplay(r)}`;
+      const val = r.won == null ? bidPart : `${r.won}/${p.ghost ? "—" : formatBidDisplay(r)}`;
       return `<span class="roster-chip ${active ? "active" : ""} ${r.won != null ? "set" : ""}">${escapeHtml(p.name)} <em>${val}</em></span>`;
     })
     .join("");
@@ -723,6 +858,34 @@ function bindTurnControls(root) {
       root.querySelectorAll("[data-bid-type]").forEach((b) => {
         b.classList.toggle("active", b.dataset.bidType === round.bidType);
       });
+    });
+  });
+
+  root.querySelectorAll("[data-harry]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const next = Number(btn.dataset.harry);
+      round.harryAdjust = next;
+      hapticTick();
+      root.querySelectorAll("[data-harry]").forEach((b) => {
+        b.classList.toggle("active", Number(b.dataset.harry) === next);
+      });
+      $(".harry-btn", root)?.classList.toggle("active", next === 1);
+      const hint = $(".harry-hint", root);
+      const adj = Number(round.harryAdjust) || 0;
+      const eff = effectiveBid(round, cards);
+      if (adj !== 0) {
+        if (hint) {
+          hint.innerHTML = `Scoring bid: <strong>${eff}</strong> (Harry ${adj > 0 ? "+" : ""}${adj})`;
+        } else {
+          const stepper = $(".stepper", root);
+          const p = document.createElement("p");
+          p.className = "hint harry-hint";
+          p.innerHTML = `Scoring bid: <strong>${eff}</strong> (Harry ${adj > 0 ? "+" : ""}${adj})`;
+          stepper?.insertAdjacentElement("afterend", p);
+        }
+      } else if (hint) {
+        hint.remove();
+      }
     });
   });
 
@@ -797,7 +960,7 @@ async function startEditRound(roundNumber) {
   });
   g.currentRound = roundNumber;
   g.phase = "bidding";
-  g.turnIndex = 0;
+  g.turnIndex = firstTurnIndexForPhase(g, roundNumber, "bidding");
   state.browseRound = null;
   state.playTab = "turn";
   await saveGame();
@@ -823,7 +986,7 @@ async function restoreAfterEdit() {
       g.currentRound = lastDone + 1;
       ensureRoundSlots(g, g.currentRound);
       g.phase = "bidding";
-      g.turnIndex = 0;
+      g.turnIndex = firstTurnIndexForPhase(g, g.currentRound, "bidding");
       await saveGame();
       state.playTab = "turn";
       renderPlay();
@@ -864,32 +1027,32 @@ async function confirmTurn(value) {
 
   if (g.phase === "bidding") {
     round.bid = Math.min(cards, Math.max(0, value));
-    g.turnIndex += 1;
-    if (g.turnIndex >= g.players.length) {
+    if (allBidsLocked(g, ri)) {
       g.phase = "tricks";
-      g.turnIndex = 0;
+      g.turnIndex = firstTurnIndexForPhase(g, g.currentRound, "tricks");
       toast("Tricks phase — tally wins");
+    } else {
+      g.turnIndex = nextTurnIndex(g, g.turnIndex, "bidding");
     }
   } else if (g.phase === "tricks") {
     round.won = Math.min(cards, Math.max(0, value));
-    g.turnIndex += 1;
-    if (g.turnIndex >= g.players.length) {
+    if (allTricksEntered(g, ri)) {
       const claimed = totalTricksWon(g, ri);
       if (claimed !== cards && state.settings.warnTrickMismatch) {
         toast(`Tricks claimed (${claimed}) ≠ ${cards} dealt — adjust if needed`);
       }
       g.phase = "bonuses";
-      g.turnIndex = 0;
+      g.turnIndex = firstTurnIndexForPhase(g, g.currentRound, "bonuses");
       toast("Bonuses — then review");
+    } else {
+      g.turnIndex = (g.turnIndex + 1) % g.players.length;
     }
   } else if (g.phase === "bonuses") {
     round.bonus = Math.max(0, value);
-    g.turnIndex += 1;
-    if (g.turnIndex >= g.players.length) {
+    if (allBonusesEntered(g, ri)) {
       g.players.forEach((p) => {
-        p.rounds[ri].completed = true;
+        if (p.rounds[ri]) p.rounds[ri].completed = true;
       });
-      // Editing a past/final round: jump straight back (no history swipe limbo).
       if (shouldReturnAfterEdit()) {
         await saveGame();
         await restoreAfterEdit();
@@ -897,6 +1060,8 @@ async function confirmTurn(value) {
       }
       g.phase = "review";
       g.turnIndex = 0;
+    } else {
+      g.turnIndex = nextTurnIndex(g, g.turnIndex, "bonuses");
     }
   }
 
@@ -930,7 +1095,7 @@ async function advanceRound() {
   ensureRoundSlots(g, next);
   g.currentRound = next;
   g.phase = "bidding";
-  g.turnIndex = 0;
+  g.turnIndex = firstTurnIndexForPhase(g, next, "bidding");
   await saveGame();
   state.playTab = "turn";
   renderPlay();
@@ -1169,6 +1334,19 @@ function bindChrome() {
   });
   document.addEventListener("click", (e) => {
     if (e.target.closest("[data-close-sheet]")) closeSheets();
+    if (e.target.closest("[data-close-ghost]")) closeGhostSheet();
+  });
+  $("#ghostAddBtn")?.addEventListener("click", async () => {
+    const pending = state.pendingStart;
+    if (!pending) return;
+    closeGhostSheet();
+    await launchGame({ ...pending, withGhost: true });
+  });
+  $("#ghostProceedBtn")?.addEventListener("click", async () => {
+    const pending = state.pendingStart;
+    if (!pending) return;
+    closeGhostSheet();
+    await launchGame({ ...pending, withGhost: false });
   });
 }
 

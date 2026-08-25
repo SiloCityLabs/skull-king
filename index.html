@@ -228,6 +228,10 @@
           <ul>
             <li>After round 10, if players are tied for first, keep dealing overtime rounds (11, 12, …) with 10 cards until there is a sole leader.</li>
           </ul>
+          <h3>Harry the Giant</h3>
+          <ul>
+            <li>On the bid screen, tap <strong>Add Harry (+1)</strong> if you used Harry to raise or lower your bid by one (scores use the adjusted bid).</li>
+          </ul>
           <h3>Official rulebook</h3>
           <p>
             <a class="linkish" href="https://fgbradleys.com/wp-content/uploads/Skull-King-Rulebook.pdf" target="_blank" rel="noopener noreferrer">Open Grandpa Beck’s Skull King rulebook (PDF)</a>
@@ -246,6 +250,26 @@
     </div>
 
     <div class="toast" id="toast" hidden role="status"></div>
+
+    <!-- TWO-PLAYER GHOST PROMPT -->
+    <div class="sheet" id="ghostSheet" hidden>
+      <div class="sheet-backdrop" data-close-ghost></div>
+      <div class="sheet-panel" role="dialog" aria-labelledby="ghostTitle">
+        <header class="sheet-head">
+          <h2 id="ghostTitle">Two pirates?</h2>
+          <button type="button" class="icon-btn" data-close-ghost aria-label="Close">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </header>
+        <div class="sheet-body prose">
+          <p>The official <strong>2-player</strong> rules use <strong>Greybeard’s Ghost</strong> as a third hand (no bid, no score). Most groups add the ghost so trick counts stay correct.</p>
+          <div class="ghost-actions">
+            <button type="button" class="btn btn-primary btn-block" id="ghostAddBtn">Add Ghost</button>
+            <button type="button" class="btn btn-secondary btn-block" id="ghostProceedBtn">Proceed as Entered</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="app.js?v=__BUILD_HASH__"></script>

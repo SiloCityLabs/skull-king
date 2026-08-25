@@ -542,6 +542,31 @@ button {
   border-color: transparent;
 }
 
+.harry-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.harry-row .harry-btn.active {
+  background: var(--parchment);
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.harry-hint {
+  margin-top: 0.35rem;
+}
+
+.ghost-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
 .turn-actions {
   display: flex;
   flex-direction: column;
@@ -731,6 +756,17 @@ button {
   display: block;
   font-size: 0.65rem;
   opacity: 0.65;
+}
+
+.round-label .lead-tag {
+  display: block;
+  font-size: 0.58rem;
+  opacity: 0.75;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 4.5rem;
 }
 
 .cell {
