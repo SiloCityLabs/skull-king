@@ -41,7 +41,7 @@ const state = {
   view: "home",
   game: null,
   playTab: "turn",
-  setupNames: ["", "", ""],
+  setupNames: ["", ""],
   setupStartingPlayer: 0,
   /** Pending crew when 2-player ghost prompt is shown */
   pendingStart: null,
@@ -281,11 +281,11 @@ function renderSetup() {
   let leadField = $("#startingPlayerField");
   if (!leadField) {
     const setupBody = $(".setup-body");
-    const addBtn = $("#addPlayerBtn");
+    const anchor = $("#setupGhostHint") || $("#addPlayerBtn");
     leadField = document.createElement("label");
     leadField.className = "field";
     leadField.id = "startingPlayerField";
-    setupBody.insertBefore(leadField, addBtn);
+    setupBody.insertBefore(leadField, anchor);
   }
   updateStartingPlayerSelect();
 
@@ -312,6 +312,8 @@ function updateStartingPlayerSelect() {
   const leadField = $("#startingPlayerField");
   if (!leadField) return;
   const filled = state.setupNames.map((n) => n.trim()).filter(Boolean);
+  const ghostHint = $("#setupGhostHint");
+  if (ghostHint) ghostHint.hidden = filled.length !== 2;
   if (filled.length < 2) {
     leadField.hidden = true;
     return;
@@ -335,9 +337,10 @@ function updateStartingPlayerSelect() {
 }
 
 function startSetup() {
-  state.setupNames = ["", "", ""];
+  state.setupNames = ["", ""];
   state.setupStartingPlayer = 0;
   state.pendingStart = null;
+  closeGhostSheet();
   $("#scoringModeSelect").value = state.settings.defaultScoring === "rascal" ? "rascal" : "classic";
   setView("setup");
   renderSetup();
@@ -368,13 +371,27 @@ async function launchGame({ names, scoringMode, withGhost = false, startingPlaye
 function openGhostSheet(names, scoringMode, startingPlayerIndex) {
   state.pendingStart = { names, scoringMode, startingPlayerIndex };
   const sheet = $("#ghostSheet");
-  if (sheet) sheet.hidden = false;
+  if (!sheet) return false;
+  sheet.hidden = false;
+  return true;
 }
 
-function closeGhostSheet() {
+function closeGhostSheet({ clearPending = true } = {}) {
   const sheet = $("#ghostSheet");
   if (sheet) sheet.hidden = true;
-  state.pendingStart = null;
+  if (clearPending) state.pendingStart = null;
+}
+
+async function promptTwoPlayerGhost(names, scoringMode, startingPlayerIndex) {
+  // Defer so the Set sail click cannot hit the newly shown backdrop.
+  await new Promise((r) => setTimeout(r, 0));
+  if (openGhostSheet(names, scoringMode, startingPlayerIndex)) return;
+
+  // Fallback when sheet markup is missing (stale PWA cache).
+  const addGhost = window.confirm(
+    "Two pirates: official rules use Greybeard’s Ghost as a third hand.\n\nOK = Add Ghost\nCancel = Proceed as Entered"
+  );
+  await launchGame({ names, scoringMode, startingPlayerIndex, withGhost: addGhost });
 }
 
 async function startGame() {
@@ -388,15 +405,16 @@ async function startGame() {
     return;
   }
   const scoringMode = $("#scoringModeSelect").value;
-  const filled = names;
   let startingPlayerIndex = 0;
   const leadSel = $("#startingPlayerSelect");
   if (leadSel) {
-    startingPlayerIndex = Math.min(Number(leadSel.value) || 0, filled.length - 1);
+    startingPlayerIndex = Math.min(Number(leadSel.value) || 0, names.length - 1);
+  } else {
+    startingPlayerIndex = Math.min(state.setupStartingPlayer || 0, names.length - 1);
   }
 
   if (names.length === 2) {
-    openGhostSheet(names, scoringMode, startingPlayerIndex);
+    await promptTwoPlayerGhost(names, scoringMode, startingPlayerIndex);
     return;
   }
 
@@ -1336,16 +1354,22 @@ function bindChrome() {
     if (e.target.closest("[data-close-sheet]")) closeSheets();
     if (e.target.closest("[data-close-ghost]")) closeGhostSheet();
   });
-  $("#ghostAddBtn")?.addEventListener("click", async () => {
+  $("#ghostAddBtn")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const pending = state.pendingStart;
     if (!pending) return;
-    closeGhostSheet();
+    closeGhostSheet({ clearPending: false });
+    state.pendingStart = null;
     await launchGame({ ...pending, withGhost: true });
   });
-  $("#ghostProceedBtn")?.addEventListener("click", async () => {
+  $("#ghostProceedBtn")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const pending = state.pendingStart;
     if (!pending) return;
-    closeGhostSheet();
+    closeGhostSheet({ clearPending: false });
+    state.pendingStart = null;
     await launchGame({ ...pending, withGhost: false });
   });
 }
