@@ -405,13 +405,17 @@ button {
   gap: 4px;
   justify-content: center;
   margin-bottom: 0.85rem;
+  flex-wrap: wrap;
 }
 
 .play-progress .dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: none;
   border-radius: 50%;
   background: rgba(232, 217, 192, 0.18);
+  cursor: pointer;
 }
 
 .play-progress .dot.done {
@@ -623,6 +627,48 @@ button {
   font-family: var(--font-display);
   font-size: 1.4rem;
   color: var(--gold);
+}
+
+.winner-banner {
+  text-align: center;
+  padding: 1.5rem 0.75rem 1.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.winner-name {
+  font-family: var(--font-display);
+  font-size: clamp(2.8rem, 12vw, 4.5rem);
+  line-height: 1.05;
+  color: var(--parchment);
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  word-break: break-word;
+}
+
+.winner-wins {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 10vw, 3.8rem);
+  line-height: 1.1;
+  color: var(--gold);
+  margin-top: 0.15rem;
+}
+
+.swipe-hint {
+  text-align: center;
+  font-size: 0.8rem;
+  margin: 0.75rem 0 0;
+}
+
+.rulebook-frame {
+  width: 100%;
+  min-height: 280px;
+  border: 1px solid rgba(232, 217, 192, 0.2);
+  border-radius: 10px;
+  background: #0a0a0a;
+  margin-top: 0.75rem;
+}
+
+.cell[data-edit-round] {
+  cursor: pointer;
 }
 
 /* Scorepad */

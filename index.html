@@ -203,11 +203,12 @@
           </button>
         </header>
         <div class="sheet-body prose">
-          <h3>Classic</h3>
+          <h3>Classic (Skull King’s scoring)</h3>
           <ul>
             <li>Exact non-zero bid: <strong>+20</strong> per trick won</li>
             <li>Exact zero bid: <strong>+10</strong> × cards dealt</li>
-            <li>Missed bid: <strong>−10</strong> × |bid − won|</li>
+            <li>Missed non-zero bid: <strong>−10</strong> × |bid − won|</li>
+            <li>Missed zero bid: <strong>−10</strong> × cards dealt (not tricks taken)</li>
             <li>Bonuses count only when the bid is exact</li>
           </ul>
           <h3>Bonuses (enter raw totals)</h3>
@@ -223,7 +224,22 @@
             <li><strong>Grapeshot:</strong> 10 × cards if exact; half if off by 1; else 0 (bonuses scale the same)</li>
             <li><strong>Cannonball:</strong> 15 × cards if exact; else 0 (including bonuses)</li>
           </ul>
-          <p class="muted">Reference art in-app mirrors Grandpa Beck’s scorepad fields: bid/result, bid points, bonus, round points, running total.</p>
+          <h3>Ties</h3>
+          <ul>
+            <li>After round 10, if players are tied for first, keep dealing overtime rounds (11, 12, …) with 10 cards until there is a sole leader.</li>
+          </ul>
+          <h3>Official rulebook</h3>
+          <p>
+            <a class="linkish" href="https://fgbradleys.com/wp-content/uploads/Skull-King-Rulebook.pdf" target="_blank" rel="noopener noreferrer">Open Grandpa Beck’s Skull King rulebook (PDF)</a>
+          </p>
+          <iframe
+            class="rulebook-frame"
+            title="Skull King rulebook PDF"
+            src="https://fgbradleys.com/wp-content/uploads/Skull-King-Rulebook.pdf#view=FitH"
+            loading="lazy"
+          ></iframe>
+          <p class="muted">If the preview is blank, your browser blocked the embed — use the link above.</p>
+          <p class="muted">Scorepad fields: bid/result, bid points, bonus, round points, running total.</p>
           <img class="ref-img" src="images/Image3_480x480.webp" alt="Skull King scorepad layout" />
         </div>
       </div>

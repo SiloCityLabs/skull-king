@@ -2,12 +2,16 @@
 
 import { GameDB } from "./db.js";
 import {
-  TOTAL_ROUNDS,
+  STANDARD_ROUNDS,
   createGame,
   cardsInRound,
   recomputePlayerTotals,
   leaderboard,
   totalTricksWon,
+  ensureRoundSlots,
+  shouldContinueVoyage,
+  lastCompletedRoundIndex,
+  isTiedForFirst,
 } from "./score.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -34,6 +38,10 @@ const state = {
   hapticAudio: null,
   /** Cached Vibration API usability; null until first probe. */
   vibrateOk: null,
+  /** 1-based completed round being browsed; null = live turn UI */
+  browseRound: null,
+  /** Restore point after editing a past round */
+  resumeAfterEdit: null,
 };
 
 function loadSettings() {
@@ -158,11 +166,20 @@ function phaseLabel(phase) {
 }
 
 function currentRoundIndex(game) {
-  return Math.min(Math.max(1, game.currentRound), TOTAL_ROUNDS) - 1;
+  return Math.max(0, (Number(game.currentRound) || 1) - 1);
 }
 
 function playerRound(player, roundIndex) {
   return player.rounds[roundIndex];
+}
+
+function roundCount(game) {
+  return Math.max(STANDARD_ROUNDS, game.currentRound, ...(game.players.map((p) => p.rounds.length) || [0]));
+}
+
+/** Round number shown in history browse, or live current. */
+function displayedRoundNumber(game) {
+  return state.browseRound || game.currentRound;
 }
 
 /* ---------- HOME ---------- */
@@ -218,6 +235,8 @@ async function openGame(id) {
   }
   state.game = g;
   state.playTab = "turn";
+  state.browseRound = null;
+  state.resumeAfterEdit = null;
   setView("play");
   renderPlay();
 }
@@ -282,6 +301,8 @@ async function startGame() {
   state.game = createGame({ players: names, scoringMode });
   await saveGame();
   state.playTab = "turn";
+  state.browseRound = null;
+  state.resumeAfterEdit = null;
   setView("play");
   renderPlay();
   toast("Round 1 — place your bids");
@@ -293,17 +314,34 @@ function renderPlay() {
   const g = state.game;
   if (!g) return;
 
-  $("#playTitle").textContent =
-    g.phase === "finished" ? "Final" : `Round ${g.currentRound} · ${cardsInRound(g.currentRound)} cards`;
-  $("#playPhase").textContent = phaseLabel(g.phase);
+  const browsing = state.browseRound != null;
+  const showRound = displayedRoundNumber(g);
+  const cards = cardsInRound(showRound);
+
+  if (g.phase === "finished" && !browsing) {
+    $("#playTitle").textContent = "Final";
+    $("#playPhase").textContent = phaseLabel(g.phase);
+  } else if (browsing) {
+    $("#playTitle").textContent = `Round ${showRound} · ${cards} cards`;
+    $("#playPhase").textContent = "History — swipe to browse";
+  } else {
+    $("#playTitle").textContent = `Round ${g.currentRound} · ${cardsInRound(g.currentRound)} cards`;
+    $("#playPhase").textContent =
+      g.currentRound > STANDARD_ROUNDS ? `Overtime · ${phaseLabel(g.phase)}` : phaseLabel(g.phase);
+  }
 
   const prog = $("#playProgress");
-  prog.innerHTML = Array.from({ length: TOTAL_ROUNDS }, (_, i) => {
+  const dots = roundCount(g);
+  prog.innerHTML = Array.from({ length: dots }, (_, i) => {
     const n = i + 1;
     let cls = "dot";
-    if (n < g.currentRound || g.phase === "finished") cls += " done";
-    else if (n === g.currentRound) cls += " current";
-    return `<span class="${cls}" title="Round ${n}"></span>`;
+    const completed = g.players.every((p) => p.rounds[i]?.completed);
+    if (completed) cls += " done";
+    if (browsing ? n === state.browseRound : n === g.currentRound && g.phase !== "finished") {
+      cls += " current";
+    }
+    if (g.phase === "finished" && !browsing && n === g.currentRound) cls += " current";
+    return `<button type="button" class="${cls}" data-round-dot="${n}" title="Round ${n}" aria-label="Round ${n}"></button>`;
   }).join("");
 
   $$("#playTabs .tab").forEach((t) => {
@@ -313,19 +351,41 @@ function renderPlay() {
   const body = $("#playBody");
   if (state.playTab === "pad") {
     body.innerHTML = renderScorepad(g);
+    bindScorepadControls(body);
   } else if (state.playTab === "standings") {
     body.innerHTML = renderStandings(g);
+    bindStandingsControls(body);
+  } else if (browsing) {
+    body.innerHTML = renderHistoryRound(g, state.browseRound - 1);
+    bindTurnControls(body);
   } else {
     body.innerHTML = renderTurn(g);
     bindTurnControls(body);
   }
+  bindRoundSwipe(body);
   syncWakeLock();
 }
 
 function renderStandings(g) {
   const board = leaderboard(g);
+  const finished = g.phase === "finished";
+  const tied = isTiedForFirst(g);
+  const winner = board[0];
+
+  let hero = "";
+  if (finished && winner && !tied) {
+    hero = `
+      <div class="winner-banner" aria-live="polite">
+        <div class="winner-name">${escapeHtml(winner.name)}</div>
+        <div class="winner-wins">Wins!</div>
+      </div>`;
+  } else if (finished && tied) {
+    hero = `<p class="crown">☠ Deadlock — keep sailing</p>`;
+  }
+
   return `
     <div class="standings">
+      ${hero}
       <ol class="standings-list">
         ${board
           .map(
@@ -338,13 +398,12 @@ function renderStandings(g) {
           )
           .join("")}
       </ol>
-      ${
-        g.phase === "finished"
-          ? `<p class="crown">☠ ${escapeHtml(board[0]?.name || "Nobody")} rules the seas</p>`
-          : ""
-      }
     </div>
   `;
+}
+
+function bindStandingsControls() {
+  /* no-op reserved */
 }
 
 function renderScorepad(g) {
@@ -353,15 +412,16 @@ function renderScorepad(g) {
     ...p,
     scored: recomputePlayerTotals(p.rounds, mode),
   }));
+  const rowsN = Math.max(...players.map((p) => p.scored.length), STANDARD_ROUNDS);
 
   const head = players
     .map((p) => `<th scope="col"><span>${escapeHtml(p.name)}</span></th>`)
     .join("");
 
-  const rows = Array.from({ length: TOTAL_ROUNDS }, (_, ri) => {
+  const rows = Array.from({ length: rowsN }, (_, ri) => {
     const cells = players
       .map((p) => {
-        const r = p.scored[ri];
+        const r = p.scored[ri] || { bid: null, won: null, completed: false };
         const bid = r.bid == null ? "—" : r.bid;
         const won = r.won == null ? "—" : r.won;
         const bidPts = r.bidPoints == null ? "" : formatPts(r.bidPoints);
@@ -374,7 +434,7 @@ function renderScorepad(g) {
             : "";
         return `
           <td>
-            <div class="cell ${ri + 1 === g.currentRound && g.phase !== "finished" ? "cell-current" : ""} ${r.completed ? "cell-done" : ""}">
+            <div class="cell ${ri + 1 === g.currentRound && g.phase !== "finished" ? "cell-current" : ""} ${r.completed ? "cell-done" : ""}" data-edit-round="${ri + 1}">
               <div class="cell-row">
                 <span class="bid-result">${bid}/${won}</span>
                 <span class="bid-pts">${bidPts}</span>
@@ -390,9 +450,9 @@ function renderScorepad(g) {
       .join("");
     return `
       <tr>
-        <th scope="row" class="round-label">
+        <th scope="row" class="round-label" data-edit-round="${ri + 1}">
           <span class="rn">${ri + 1}</span>
-          <span class="cards">${ri + 1}</span>
+          <span class="cards">${cardsInRound(ri + 1)}</span>
         </th>
         ${cells}
       </tr>`;
@@ -422,9 +482,20 @@ function renderScorepad(g) {
           </tr>
         </tfoot>
       </table>
-      <p class="legend muted">bid/won · bid pts · bonus · round pts · running</p>
+      <p class="legend muted">Tap a completed round to edit · bid/won · bid pts · bonus · round · running</p>
     </div>
   `;
+}
+
+function bindScorepadControls(root) {
+  root.querySelectorAll("[data-edit-round]").forEach((el) => {
+    el.addEventListener("click", async () => {
+      const n = Number(el.dataset.editRound);
+      const g = state.game;
+      if (!g || !g.players.every((p) => p.rounds[n - 1]?.completed)) return;
+      await browseOrEditRound(n, { edit: true });
+    });
+  });
 }
 
 function renderTurn(g) {
@@ -480,8 +551,7 @@ function renderTurn(g) {
           <button type="button" class="stepper-btn" data-delta="1" aria-label="Increase">+</button>
         </div>
         <div class="quick-row">
-          ${[0, 1, 2, 3, 4, 5]
-            .filter((n) => n <= cards)
+          ${Array.from({ length: cards + 1 }, (_, n) => n)
             .map((n) => `<button type="button" class="chip quick" data-set="${n}">${n}</button>`)
             .join("")}
         </div>
@@ -497,7 +567,7 @@ function renderTurn(g) {
   return `
     <div class="turn-card">
       <p class="turn-who"><span class="eyebrow">Bonus</span> ${escapeHtml(player.name)}</p>
-      <p class="hint">Bid ${round.bid}/${round.won} · enter raw bonus (scaled if bid misses)</p>
+      <p class="hint">Bid ${round.bid}/${round.won} · enter raw bonus (only counts if bid is exact)</p>
       <div class="stepper" data-stepper="bonus">
         <button type="button" class="stepper-btn" data-delta="-10" aria-label="Decrease">−10</button>
         <div class="stepper-value" id="stepValue">${round.bonus ?? 0}</div>
@@ -516,8 +586,16 @@ function renderTurn(g) {
   `;
 }
 
-function renderReview(g, ri) {
+function renderHistoryRound(g, ri) {
+  return `
+    ${renderReview(g, ri, { history: true })}
+    <p class="swipe-hint muted">Swipe for other rounds · tap Edit to fix mistakes</p>
+  `;
+}
+
+function renderReview(g, ri, opts = {}) {
   const mode = g.scoringMode;
+  const roundNum = ri + 1;
   const rows = g.players
     .map((p) => {
       const scored = recomputePlayerTotals(
@@ -534,16 +612,31 @@ function renderReview(g, ri) {
     })
     .join("");
 
-  const isLast = g.currentRound >= TOTAL_ROUNDS;
+  const history = !!opts.history;
+  const continueOn = shouldContinueVoyage(g);
+  const overtime = g.currentRound >= STANDARD_ROUNDS && continueOn;
+  let primaryLabel;
+  if (history) {
+    primaryLabel = "Back to live";
+  } else if (!continueOn) {
+    primaryLabel = "Finish voyage";
+  } else if (overtime || g.currentRound >= STANDARD_ROUNDS) {
+    primaryLabel = `Overtime · deal round ${g.currentRound + 1}`;
+  } else {
+    primaryLabel = `Deal round ${g.currentRound + 1}`;
+  }
+
   return `
     <div class="turn-card review">
-      <p class="turn-who"><span class="eyebrow">Review</span> Round ${g.currentRound}</p>
+      <p class="turn-who"><span class="eyebrow">${history ? "History" : "Review"}</span> Round ${roundNum}</p>
       <ul class="review-list">${rows}</ul>
       <div class="turn-actions">
-        <button type="button" class="btn btn-primary btn-block" id="advanceRoundBtn">
-          ${isLast ? "Finish voyage" : `Deal round ${g.currentRound + 1}`}
-        </button>
-        <button type="button" class="btn btn-secondary btn-block" id="editRoundBtn">Edit this round</button>
+        ${
+          history
+            ? `<button type="button" class="btn btn-primary btn-block" id="exitHistoryBtn">${primaryLabel}</button>`
+            : `<button type="button" class="btn btn-primary btn-block" id="advanceRoundBtn">${primaryLabel}</button>`
+        }
+        <button type="button" class="btn btn-secondary btn-block" id="editRoundBtn" data-edit-round="${roundNum}">Edit this round</button>
       </div>
     </div>
   `;
@@ -632,18 +725,70 @@ function bindTurnControls(root) {
     hapticConfirm();
     await advanceRound();
   });
-  $("#editRoundBtn", root)?.addEventListener("click", async () => {
+  $("#exitHistoryBtn", root)?.addEventListener("click", () => {
     hapticTick();
-    g.phase = "bidding";
-    g.turnIndex = 0;
-    // keep existing bids/wons for editing
-    await saveGame();
+    state.browseRound = null;
+    state.playTab = "turn";
     renderPlay();
   });
+  $("#editRoundBtn", root)?.addEventListener("click", async () => {
+    hapticTick();
+    const n = Number($("#editRoundBtn", root)?.dataset.editRound) || g.currentRound;
+    await startEditRound(n);
+  });
+}
+
+async function browseOrEditRound(roundNumber, { edit = false } = {}) {
+  const g = state.game;
+  if (!g) return;
+  const ri = roundNumber - 1;
+  if (ri < 0) return;
+  const completed = g.players.every((p) => p.rounds[ri]?.completed);
+  if (!completed && edit) return;
+  if (edit) {
+    await startEditRound(roundNumber);
+    return;
+  }
+  if (!completed) {
+    state.browseRound = null;
+    renderPlay();
+    return;
+  }
+  state.browseRound = roundNumber;
+  state.playTab = "turn";
+  renderPlay();
+}
+
+async function startEditRound(roundNumber) {
+  const g = state.game;
+  if (!g) return;
+  ensureRoundSlots(g, roundNumber);
+  const ri = roundNumber - 1;
+
+  if (!state.resumeAfterEdit) {
+    state.resumeAfterEdit = {
+      currentRound: g.currentRound,
+      phase: g.phase,
+      turnIndex: g.turnIndex,
+    };
+  }
+
+  g.players.forEach((p) => {
+    if (p.rounds[ri]) p.rounds[ri].completed = false;
+  });
+  g.currentRound = roundNumber;
+  g.phase = "bidding";
+  g.turnIndex = 0;
+  state.browseRound = null;
+  state.playTab = "turn";
+  await saveGame();
+  renderPlay();
+  toast(`Editing round ${roundNumber}`);
 }
 
 async function confirmTurn(value) {
   const g = state.game;
+  ensureRoundSlots(g, g.currentRound);
   const ri = currentRoundIndex(g);
   const player = g.players[g.turnIndex];
   const round = player.rounds[ri];
@@ -687,7 +832,48 @@ async function confirmTurn(value) {
 
 async function advanceRound() {
   const g = state.game;
-  if (g.currentRound >= TOTAL_ROUNDS) {
+  const resume = state.resumeAfterEdit;
+
+  // Finished re-scoring a past round — jump back to the live position.
+  if (resume && resume.currentRound !== g.currentRound) {
+    state.resumeAfterEdit = null;
+    ensureRoundSlots(g, resume.currentRound);
+    g.currentRound = resume.currentRound;
+    g.turnIndex = resume.turnIndex || 0;
+
+    if (resume.phase === "finished") {
+      const lastDone = lastCompletedRoundIndex(g) + 1;
+      if (lastDone >= STANDARD_ROUNDS && isTiedForFirst(g)) {
+        g.currentRound = lastDone + 1;
+        ensureRoundSlots(g, g.currentRound);
+        g.phase = "bidding";
+        g.turnIndex = 0;
+        await saveGame();
+        state.playTab = "turn";
+        renderPlay();
+        toast(`Still tied — overtime round ${g.currentRound}`);
+        return;
+      }
+      g.phase = "finished";
+      g.currentRound = Math.max(lastDone, STANDARD_ROUNDS);
+      await saveGame();
+      state.playTab = "standings";
+      renderPlay();
+      toast("Voyage complete");
+      return;
+    }
+
+    g.phase = resume.phase;
+    await saveGame();
+    state.playTab = "turn";
+    renderPlay();
+    toast(`Back to round ${g.currentRound}`);
+    return;
+  }
+
+  state.resumeAfterEdit = null;
+
+  if (!shouldContinueVoyage(g)) {
     g.phase = "finished";
     await saveGame();
     state.playTab = "standings";
@@ -695,12 +881,96 @@ async function advanceRound() {
     toast("Voyage complete");
     return;
   }
-  g.currentRound += 1;
+
+  const next = g.currentRound + 1;
+  ensureRoundSlots(g, next);
+  g.currentRound = next;
   g.phase = "bidding";
   g.turnIndex = 0;
   await saveGame();
+  state.playTab = "turn";
   renderPlay();
-  toast(`Round ${g.currentRound} — place your bids`);
+  if (next > STANDARD_ROUNDS) {
+    toast(`Tied at the top — overtime round ${next}`);
+  } else {
+    toast(`Round ${next} — place your bids`);
+  }
+}
+
+function bindRoundSwipe(root) {
+  if (!root || root.dataset.swipeBound === "1") return;
+  root.dataset.swipeBound = "1";
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+
+  root.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length !== 1) return;
+      tracking = true;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+
+  root.addEventListener(
+    "touchend",
+    (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+      // swipe left → newer / live; swipe right → older history
+      if (dx < 0) shiftHistory(1);
+      else shiftHistory(-1);
+    },
+    { passive: true }
+  );
+}
+
+function shiftHistory(dir) {
+  const g = state.game;
+  if (!g || state.playTab !== "turn") return;
+  const lastDone = lastCompletedRoundIndex(g); // 0-based
+  if (lastDone < 0) return;
+
+  let cur;
+  if (state.browseRound != null) cur = state.browseRound;
+  else if (g.phase === "review" || g.phase === "finished") cur = g.currentRound;
+  else cur = g.currentRound; // live in-progress — first swipe goes to last completed
+
+  if (state.browseRound == null && g.phase !== "review" && g.phase !== "finished") {
+    // Enter history at last completed (swipe either way starts browse)
+    state.browseRound = lastDone + 1;
+    hapticTick();
+    renderPlay();
+    return;
+  }
+
+  const next = cur + dir;
+  if (next < 1) return;
+  if (next > lastDone + 1) {
+    // past newest completed → live
+    state.browseRound = null;
+    hapticTick();
+    renderPlay();
+    return;
+  }
+  if (next === g.currentRound && (g.phase === "review" || !g.players.every((p) => p.rounds[next - 1]?.completed))) {
+    state.browseRound = null;
+    hapticTick();
+    renderPlay();
+    return;
+  }
+  if (!g.players.every((p) => p.rounds[next - 1]?.completed)) return;
+  state.browseRound = next;
+  hapticTick();
+  renderPlay();
 }
 
 /* ---------- helpers ---------- */
@@ -808,7 +1078,13 @@ function bindChrome() {
     const tab = e.target.closest("[data-tab]");
     if (!tab) return;
     state.playTab = tab.dataset.tab;
+    if (tab.dataset.tab !== "turn") state.browseRound = null;
     renderPlay();
+  });
+  $("#playProgress").addEventListener("click", (e) => {
+    const dot = e.target.closest("[data-round-dot]");
+    if (!dot || !state.game) return;
+    browseOrEditRound(Number(dot.dataset.roundDot));
   });
   $("#rulesBtn").addEventListener("click", () => openSheet("#rulesSheet"));
   $("#settingsRulesBtn").addEventListener("click", () => openSheet("#rulesSheet"));

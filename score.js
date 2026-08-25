@@ -1,12 +1,20 @@
 "use strict";
 
-/** Number of rounds in a standard Skull King game. */
-export const TOTAL_ROUNDS = 10;
+/** Standard voyage length before possible overtime ties. */
+export const STANDARD_ROUNDS = 10;
+
+/** @deprecated use STANDARD_ROUNDS — kept for older imports */
+export const TOTAL_ROUNDS = STANDARD_ROUNDS;
+
+/** Max cards dealt in a hand (round 10 and overtime). */
+export const MAX_CARDS = 10;
 
 /**
- * Classic Skull King bid scoring.
- * Correct non-zero: +20 × tricks. Correct zero: +10 × cards dealt.
- * Miss: −10 × |bid − won|.
+ * Classic Skull King bid scoring (rulebook “The Skull King’s Scoring”).
+ * Correct non-zero: +20 × tricks.
+ * Correct zero: +10 × cards dealt.
+ * Missed non-zero: −10 × |bid − won|.
+ * Missed zero: −10 × cards dealt (not −10 × tricks taken).
  */
 export function classicBidPoints(bid, won, cardsDealt) {
   const b = Number(bid) || 0;
@@ -16,13 +24,13 @@ export function classicBidPoints(bid, won, cardsDealt) {
     if (b === 0) return 10 * cards;
     return 20 * w;
   }
+  if (b === 0) return -10 * cards;
   return -10 * Math.abs(b - w);
 }
 
 /**
  * Rascal / Grapeshot scoring: 10 pts per card dealt.
  * Correct → full; off by 1 → half; else 0.
- * Multiplier applies to bonuses the same way.
  */
 export function rascalMultiplier(bid, won) {
   const diff = Math.abs((Number(bid) || 0) - (Number(won) || 0));
@@ -36,9 +44,7 @@ export function rascalBidPoints(bid, won, cardsDealt) {
   return potential * rascalMultiplier(bid, won);
 }
 
-/**
- * Cannonball: 15 pts per card if exact; else 0. Bonuses also all-or-nothing.
- */
+/** Cannonball: 15 pts per card if exact; else 0. */
 export function cannonballBidPoints(bid, won, cardsDealt) {
   if ((Number(bid) || 0) === (Number(won) || 0)) {
     return 15 * (Number(cardsDealt) || 1);
@@ -64,9 +70,6 @@ export function computeBidPoints(bid, won, cardsDealt, scoringMode, bidType) {
   return classicBidPoints(bid, won, cardsDealt);
 }
 
-/**
- * Bonus multiplier for the round (classic: only if bid exact; rascal/cannonball as above).
- */
 export function computeBonusMultiplier(bid, won, scoringMode, bidType) {
   if (scoringMode === "rascal") {
     if (bidType === "cannonball") return cannonballMultiplier(bid, won);
@@ -85,14 +88,19 @@ export function roundPoints(bidPoints, bonusPoints) {
   return (Number(bidPoints) || 0) + (Number(bonusPoints) || 0);
 }
 
+/** Cards dealt for a round number (overtime stays at MAX_CARDS). */
+export function cardsInRound(roundNumber) {
+  return Math.min(Math.max(1, Number(roundNumber) || 1), MAX_CARDS);
+}
+
 /**
  * Recompute a player's round scores and running totals.
- * @param {Array<{bid:number|null, won:number|null, bonus:number, bidType?:string, completed?:boolean}>} rounds
+ * cardsDealt uses round index + 1, capped at MAX_CARDS for overtime.
  */
 export function recomputePlayerTotals(rounds, scoringMode) {
   let running = 0;
-  return rounds.map((r, i) => {
-    const cardsDealt = i + 1;
+  return (rounds || []).map((r, i) => {
+    const cardsDealt = cardsInRound(i + 1);
     const bid = r.bid;
     const won = r.won;
     const incomplete = bid == null || won == null || !r.completed;
@@ -126,18 +134,40 @@ export function emptyRound() {
   };
 }
 
+function newId() {
+  try {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    /* ignore */
+  }
+  return `sk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function createPlayer(name, id) {
   return {
-    id: id || crypto.randomUUID(),
+    id: id || newId(),
     name: String(name || "").trim() || "Pirate",
-    rounds: Array.from({ length: TOTAL_ROUNDS }, () => emptyRound()),
+    rounds: Array.from({ length: STANDARD_ROUNDS }, () => emptyRound()),
   };
+}
+
+/** Grow each player's rounds array through `throughRound` (1-based). */
+export function ensureRoundSlots(game, throughRound) {
+  const need = Math.max(1, Number(throughRound) || 1);
+  for (const p of game.players) {
+    while (p.rounds.length < need) {
+      p.rounds.push(emptyRound());
+    }
+  }
+  return game;
 }
 
 export function createGame({ players, scoringMode = "classic", title } = {}) {
   const names = (players || []).map((p) => (typeof p === "string" ? p : p.name));
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     title: title || defaultGameTitle(),
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -145,7 +175,6 @@ export function createGame({ players, scoringMode = "classic", title } = {}) {
     currentRound: 1,
     /** @type {"bidding"|"tricks"|"bonuses"|"review"|"finished"} */
     phase: "bidding",
-    /** Index of player whose turn it is within the current phase (0-based). */
     turnIndex: 0,
     players: names.map((n) => createPlayer(n)),
   };
@@ -176,6 +205,22 @@ export function leaderboard(game) {
     .sort((a, b) => b.total - a.total);
 }
 
+/** True when two or more players share the top score. */
+export function isTiedForFirst(game) {
+  const board = leaderboard(game);
+  if (board.length < 2) return false;
+  return board[0].total === board[1].total;
+}
+
+/**
+ * After completing the current round review: continue if under 10 rounds,
+ * or if still tied for first (overtime 11, 12, …).
+ */
+export function shouldContinueVoyage(game) {
+  if (game.currentRound < STANDARD_ROUNDS) return true;
+  return isTiedForFirst(game);
+}
+
 export function totalTricksWon(game, roundIndex) {
   return game.players.reduce((sum, p) => {
     const w = p.rounds[roundIndex]?.won;
@@ -183,6 +228,12 @@ export function totalTricksWon(game, roundIndex) {
   }, 0);
 }
 
-export function cardsInRound(roundNumber) {
-  return Math.min(Math.max(1, roundNumber), TOTAL_ROUNDS);
+/** Highest round index that has been completed (0-based), or -1. */
+export function lastCompletedRoundIndex(game) {
+  let last = -1;
+  const len = Math.max(...game.players.map((p) => p.rounds.length), 0);
+  for (let i = 0; i < len; i++) {
+    if (game.players.every((p) => p.rounds[i]?.completed)) last = i;
+  }
+  return last;
 }

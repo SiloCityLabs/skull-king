@@ -32,7 +32,24 @@ Haptics prefer `navigator.vibrate` when the API reports success; otherwise play 
 
 ## Round phases
 
-`bidding` → `tricks` → `bonuses` → `review` → next round (or `finished` after 10).
+`bidding` → `tricks` → `bonuses` → `review` → next round. After round 10, if tied for first, overtime rounds 11+ (10 cards) continue until a sole leader → `finished`.
+
+Swipe left/right (or tap round dots / scorepad cells) to browse completed round history; **Edit this round** fixes mistakes and restores the live position afterward.
+
+## Scoring notes
+
+Classic missed **zero** bid is **−10 × cards dealt** (rulebook), not −10 × tricks taken.
+
+Official PDF: https://fgbradleys.com/wp-content/uploads/Skull-King-Rulebook.pdf
+
+## Tests
+
+```bash
+npm install
+npm test
+```
+
+Maintainer Vitest suite in `tests/` — not part of the Pages deploy.
 
 ## Do not
 

@@ -27,9 +27,16 @@ Open http://localhost:8080
 - Build command: `make build`
 - Output directory: `_site`
 
+## Tests
+
+```bash
+npm install
+npm test
+```
+
 ## Scoring
 
-See in-app **Scoring reference**, or [The Board Game Family — The new Skull King](https://www.theboardgamefamily.com/2021/09/the-new-skull-king/).
+See in-app **Scoring reference**, the [official rulebook PDF](https://fgbradleys.com/wp-content/uploads/Skull-King-Rulebook.pdf), or [The Board Game Family — The new Skull King](https://www.theboardgamefamily.com/2021/09/the-new-skull-king/).
 
 ## License
 

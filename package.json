@@ -2,5 +2,12 @@
   "name": "skull-king",
   "private": true,
   "type": "module",
-  "description": "Skull King Scorekeeper PWA — static site; no bundler."
+  "description": "Skull King Scorekeeper PWA — tests only; the site itself has no bundler.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
 }
